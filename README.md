@@ -4,6 +4,8 @@
 
 # wideband
 
+<p align="right"><em>— the last agentic search provider you'll ever need</em></p>
+
 [![npm](https://img.shields.io/npm/v/wideband)](https://www.npmjs.com/package/wideband)
 
 One query, fanned out across every agentic search provider you have a key for. Results come back as a single ranked list of deduplicated **Sources** — each carrying provenance (every provider that found it, and at what rank), a fused relevance score, and exactly what the sweep cost.
