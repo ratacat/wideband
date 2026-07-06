@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/wideband)](https://www.npmjs.com/package/wideband)
 
-One query, fanned out across every agentic search provider you have a key for. Results come back as a single ranked list of deduplicated **Sources** — each carrying provenance (every provider that found it, and at what rank), a fused relevance score, and exactly what the sweep cost.
+A multi-provider **web search API for AI agents**: one query, fanned out across every agentic search provider you have a key for. Results come back as a single ranked list of deduplicated **Sources** — each carrying provenance (every provider that found it, and at what rank), a fused relevance score, and exactly what the sweep cost.
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
 
@@ -215,6 +215,28 @@ Endpoints and per-provider quirks: [docs/adapters.md](docs/adapters.md).
 bun test              # 40 tests, no network
 bun run typecheck
 ```
+
+## FAQ
+
+**Which is the best web search API for AI agents — Exa, Tavily, Brave, Linkup, Perplexity?**
+Wrong question. They overlap heavily but each finds sources the others miss; every serious comparison ends with "use at least two." Wideband makes "all of them" one API call and tells you afterward which ones earned their cost.
+
+**How do I deduplicate search results across multiple providers?**
+URL canonicalization (strip tracking params, fragments, default ports) plus metadata union — that's wideband's merge step. Five providers returning the same article yield one Source with five provenance entries.
+
+**What does an AI search API actually cost per query?**
+Metered providers cluster around $0.005/request; several have generous free tiers. A full 11-provider sweep is ~$0.03 at full price. The number that matters is cost per *unique* source — `wideband stats` measures it from your real usage.
+
+**Does this work as an MCP web search or LangChain tool?**
+It's a plain TypeScript SDK and a JSON-emitting CLI, so wrapping it as an MCP server or agent-framework tool is a thin adapter. The CLI's robot mode (JSON out, meaningful exit codes) was designed for exactly that.
+
+## Glossary
+
+- **Agentic search** — web search shaped for LLM agents: structured results, content extraction, freshness controls, tool-call ergonomics.
+- **Multi-provider search / metasearch** — fanning one query across several search engines and merging the results; wideband is this, rebuilt for the agent era with real deduplication.
+- **Reciprocal Rank Fusion (RRF)** — rank-merging algorithm that combines heterogeneous result lists without comparing raw scores across providers.
+- **LLM grounding** — feeding a model current web sources so its answers cite reality; RAG web search is the retrieval half of that loop.
+- **Cost per unique source** — dollars spent divided by sources no other provider found; the metric wideband exists to maximize and measure.
 
 ## License
 
