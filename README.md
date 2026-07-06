@@ -4,6 +4,8 @@
 
 # wideband
 
+[![npm](https://img.shields.io/npm/v/wideband)](https://www.npmjs.com/package/wideband)
+
 One query, fanned out across every agentic search provider you have a key for. Results come back as a single ranked list of deduplicated **Sources** — each carrying provenance (every provider that found it, and at what rank), a fused relevance score, and exactly what the sweep cost.
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
@@ -19,13 +21,24 @@ Built on [Bun](https://bun.sh). One runtime dependency (`zod`); everything else 
 
 ## Quick start
 
-```bash
-bun install
-bun link        # puts the `wideband` bin on your PATH
+Requires [Bun](https://bun.sh) (the CLI and library run on it).
 
-cp .env.example .env   # add keys for the providers you use
+```bash
+npm install -g wideband   # or: bun add -g wideband
+
+export EXA_API_KEY=...    # any provider keys you have — see the Providers table below
 wideband providers --pretty
 wideband scan "bun sqlite WAL" --max 5 --pretty
+```
+
+Using it as a library: `npm install wideband`, then `import { wideband } from 'wideband'` (see [SDK](#sdk)).
+
+From source instead:
+
+```bash
+git clone https://github.com/ratacat/wideband && cd wideband
+bun install && bun link       # puts the `wideband` bin on your PATH
+cp .env.example .env          # add keys for the providers you use
 ```
 
 Only providers with a key present participate in a sweep — one key is enough to start.
@@ -141,6 +154,30 @@ type CostModel =
 ```
 
 `wideband costs` shows month-to-date spend and quota consumption per provider.
+
+### What providers cost
+
+As configured in the adapters (modeled estimate; provider-reported dollars override it per call when available):
+
+| Provider | Modeled cost | Free allowance |
+| --- | --- | --- |
+| Brave | free tier | ~2,000 req/mo ($5/mo in credits; paid: ~$5/1k) |
+| SearchX | free tier | 90,000 req/mo |
+| Jina | free tier | 1,000 req/mo |
+| Sailor | free tier | 500 req/mo |
+| Desearch | $0.00025/req | signup credits |
+| Exa | $0.005/req | 20,000 req/mo free, then ~$7/1k (deep: $12/1k) |
+| Tavily | $0.005/req | 1,000 credits/mo (basic = 1 credit, advanced = 2; PAYG $0.008/credit) |
+| Linkup | $0.005/req | 4,000 signup queries + $5/mo credit top-up |
+| Parallel | $0.005/req | signup credits |
+| Perplexity | $0.005/req | signup credits |
+| Nimble | $0.005/req | trial workspace |
+
+Free tiers cover a lot: with the four free-tier providers alone you get thousands of sweeps per month at $0.
+
+**Full-price sweep, all 11 providers, no free quota left:** a `scan` runs ~$0.03 (7 metered calls ≈ $0.005 each, Desearch ≈ $0.0003, free-tier providers $0). A `research` sweep runs higher where providers bill for depth — roughly $0.04–$0.08 (e.g. Tavily advanced is 2 credits, Exa deep search ~$0.012). In practice most sweeps cost less: free quotas absorb calls first, and `--budget` hard-caps a sweep, cheapest providers first.
+
+Pricing is the providers' to change — treat the table as a snapshot (mid-2026) and `wideband stats` as the ground truth for what *your* searches actually cost.
 
 ## Telemetry
 
