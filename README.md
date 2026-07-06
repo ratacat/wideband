@@ -87,6 +87,23 @@ Key flags:
 
 Exit codes: `0` ok · `1` no results · `2` bad args · `3` config · `4` budget · `5` all providers failed.
 
+## MCP server
+
+`wideband-mcp` ships in the package: a stdio MCP server exposing `scan`, `research`, and `providers` as tools, so any MCP client (Claude Code, Claude Desktop, Cursor, ...) gets multi-provider web search as a single tool call.
+
+```json
+{
+  "mcpServers": {
+    "wideband": {
+      "command": "wideband-mcp",
+      "env": { "EXA_API_KEY": "...", "TAVILY_API_KEY": "..." }
+    }
+  }
+}
+```
+
+Provider keys come from the server process env (as above) or the shell that launches the client. Tool arguments mirror the CLI: `q`, `max`, `providers`, `budget`, `hours`.
+
 ## SDK
 
 ```ts

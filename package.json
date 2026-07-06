@@ -32,7 +32,8 @@
     }
   },
   "bin": {
-    "wideband": "dist/cli/main.js"
+    "wideband": "dist/cli/main.js",
+    "wideband-mcp": "dist/mcp/main.js"
   },
   "files": [
     "dist"
@@ -48,7 +49,7 @@
     "test": "bun test",
     "cli": "bun src/cli/main.ts",
     "typecheck": "bunx tsc --noEmit",
-    "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts src/mcp/main.ts --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
