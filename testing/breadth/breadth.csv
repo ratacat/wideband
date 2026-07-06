@@ -1,0 +1,13 @@
+series,avg_found,avg_unique_contribution,n_queries
+wideband_union,48.5,,10
+brave,10.0,0.0,10
+exa,10.0,8.0,10
+parallel,10.0,3.7,10
+perplexity,10.0,5.4,10
+linkup,10.0,2.0,10
+desearch,10.0,0.0,10
+tavily,9.2,0.6,10
+jina,9.2,1.2,10
+sailor,9.1,8.2,10
+nimble,6.6,0.5,10
+searchx,2.8,2.6,10

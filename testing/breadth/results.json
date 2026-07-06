@@ -1,0 +1,890 @@
+[
+ {
+  "q": "bun sqlite WAL mode performance",
+  "union": 38,
+  "totalHits": 89,
+  "overlapPct": 0.573033708,
+  "found": {
+   "brave": 10,
+   "exa": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 10,
+   "jina": 10,
+   "linkup": 10,
+   "desearch": 10,
+   "sailor": 7,
+   "searchx": 2
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 630
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 499
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 3,
+    "latencyMs": 729
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 3,
+    "latencyMs": 829
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 944
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1713
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1291
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 0,
+    "uniqueContributed": 0,
+    "latencyMs": 5796
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1962
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 7,
+    "uniqueContributed": 7,
+    "latencyMs": 1835
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 2,
+    "uniqueContributed": 2,
+    "latencyMs": 1508
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 5800
+ },
+ {
+  "q": "CRISPR base editing clinical trial results",
+  "union": 54,
+  "totalHits": 102,
+  "overlapPct": 0.470588235,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 9,
+   "desearch": 10,
+   "exa": 10,
+   "sailor": 10,
+   "searchx": 5
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 506
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 9,
+    "latencyMs": 411
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 710
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 7,
+    "latencyMs": 468
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 1379
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 2,
+    "latencyMs": 960
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1090
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 7048
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1638
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 9,
+    "latencyMs": 1011
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 5,
+    "uniqueContributed": 4,
+    "latencyMs": 558
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 7049
+ },
+ {
+  "q": "EU AI Act enforcement timeline for general purpose models",
+  "union": 47,
+  "totalHits": 100,
+  "overlapPct": 0.53,
+  "found": {
+   "brave": 10,
+   "exa": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 9,
+   "desearch": 10,
+   "sailor": 10,
+   "searchx": 3
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 429
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 7,
+    "latencyMs": 417
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 1,
+    "latencyMs": 608
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 6,
+    "latencyMs": 411
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 842
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 603
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 874
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 12443
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1116
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 1220
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 3,
+    "latencyMs": 704
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 12446
+ },
+ {
+  "q": "reciprocal rank fusion information retrieval evaluation",
+  "union": 42,
+  "totalHits": 96,
+  "overlapPct": 0.5625,
+  "found": {
+   "brave": 10,
+   "exa": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 7,
+   "desearch": 10,
+   "sailor": 10,
+   "searchx": 1
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 505
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 8,
+    "latencyMs": 402
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 4,
+    "latencyMs": 573
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 4,
+    "latencyMs": 392
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 900
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 1512
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1046
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 7,
+    "uniqueContributed": 0,
+    "latencyMs": 4624
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 2546
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 904
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 1,
+    "uniqueContributed": 1,
+    "latencyMs": 564
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 4627
+ },
+ {
+  "q": "best mechanical keyboard switches 2026",
+  "union": 54,
+  "totalHits": 98,
+  "overlapPct": 0.448979592,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 8,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 8,
+   "desearch": 10,
+   "exa": 10,
+   "sailor": 10,
+   "searchx": 3
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 540
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 9,
+    "latencyMs": 379
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 599
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 7,
+    "latencyMs": 397
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 8,
+    "uniqueContributed": 2,
+    "latencyMs": 1241
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 3,
+    "latencyMs": 757
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 953
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 8,
+    "uniqueContributed": 1,
+    "latencyMs": 3632
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 2409
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 890
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 3,
+    "latencyMs": 522
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 3634
+ },
+ {
+  "q": "prediction market resolution source disputes",
+  "union": 55,
+  "totalHits": 102,
+  "overlapPct": 0.460784314,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 10,
+   "jina": 10,
+   "linkup": 10,
+   "nimble": 9,
+   "desearch": 10,
+   "exa": 10,
+   "sailor": 10,
+   "searchx": 3
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 495
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 8,
+    "latencyMs": 427
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 6,
+    "latencyMs": 743
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 7,
+    "latencyMs": 408
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 1,
+    "latencyMs": 1918
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 2,
+    "latencyMs": 624
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1020
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 2668
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 2337
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 927
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 3,
+    "latencyMs": 543
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 2670
+ },
+ {
+  "q": "TypeScript 6 breaking changes migration",
+  "union": 28,
+  "totalHits": 96,
+  "overlapPct": 0.708333333,
+  "found": {
+   "brave": 10,
+   "exa": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 10,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 8,
+   "desearch": 10,
+   "sailor": 7,
+   "searchx": 2
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 477
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 424
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1561
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 3,
+    "latencyMs": 812
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 3938
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 728
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 932
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 8,
+    "uniqueContributed": 0,
+    "latencyMs": 5967
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1745
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 7,
+    "uniqueContributed": 0,
+    "latencyMs": 852
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 2,
+    "uniqueContributed": 2,
+    "latencyMs": 665
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 5968
+ },
+ {
+  "q": "lithium iron phosphate battery degradation study",
+  "union": 64,
+  "totalHits": 98,
+  "overlapPct": 0.346938776,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "nimble": 7,
+   "desearch": 10,
+   "sailor": 10,
+   "searchx": 3,
+   "exa": 10,
+   "linkup": 10
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 602
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 706
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 958
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 7,
+    "latencyMs": 523
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 1008
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 724
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 587
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 7,
+    "uniqueContributed": 2,
+    "latencyMs": 3728
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1888
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 9,
+    "latencyMs": 1022
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 2,
+    "latencyMs": 669
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 3729
+ },
+ {
+  "q": "James Webb telescope exoplanet atmosphere findings",
+  "union": 57,
+  "totalHits": 91,
+  "overlapPct": 0.373626374,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "desearch": 10,
+   "exa": 10,
+   "linkup": 10,
+   "sailor": 10,
+   "searchx": 3
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 284
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 9,
+    "latencyMs": 416
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 4,
+    "latencyMs": 651
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 450
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 2,
+    "latencyMs": 1262
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 1214
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 435
+   },
+   "nimble": {
+    "status": "timeout",
+    "hits": 0,
+    "uniqueContributed": 0,
+    "latencyMs": 15003
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1791
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 1000
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 3,
+    "latencyMs": 580
+   }
+  },
+  "costUSD": 0.02725,
+  "ms": 15004
+ },
+ {
+  "q": "restaurant industry labor shortage statistics 2026",
+  "union": 46,
+  "totalHits": 97,
+  "overlapPct": 0.525773196,
+  "found": {
+   "brave": 10,
+   "parallel": 10,
+   "perplexity": 10,
+   "tavily": 9,
+   "jina": 9,
+   "linkup": 10,
+   "nimble": 9,
+   "desearch": 10,
+   "exa": 10,
+   "sailor": 7,
+   "searchx": 3
+  },
+  "providers": {
+   "brave": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 479
+   },
+   "exa": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 10,
+    "latencyMs": 425
+   },
+   "parallel": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 4,
+    "latencyMs": 909
+   },
+   "perplexity": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 5,
+    "latencyMs": 596
+   },
+   "tavily": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 0,
+    "latencyMs": 947
+   },
+   "jina": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 602
+   },
+   "linkup": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 953
+   },
+   "nimble": {
+    "status": "ok",
+    "hits": 9,
+    "uniqueContributed": 1,
+    "latencyMs": 5259
+   },
+   "desearch": {
+    "status": "ok",
+    "hits": 10,
+    "uniqueContributed": 0,
+    "latencyMs": 1811
+   },
+   "sailor": {
+    "status": "ok",
+    "hits": 7,
+    "uniqueContributed": 7,
+    "latencyMs": 916
+   },
+   "searchx": {
+    "status": "ok",
+    "hits": 3,
+    "uniqueContributed": 3,
+    "latencyMs": 638
+   }
+  },
+  "costUSD": 0.03225,
+  "ms": 5259
+ }
+]
