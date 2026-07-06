@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/wideband-hero.jpg" alt="A lone figure receiving bands of spectral light that converge into a single signal" width="100%">
+</p>
+
 # wideband
 
 One query, fanned out across every agentic search provider you have a key for. Results come back as a single ranked list of deduplicated **Sources** — each carrying provenance (every provider that found it, and at what rank), a fused relevance score, and exactly what the sweep cost.
