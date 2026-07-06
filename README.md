@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/wideband-hero.jpg" alt="A lone figure receiving bands of spectral light that converge into a single signal" width="100%">
+  <img src="assets/wideband-hero.jpg" alt="Bar chart: unique sources found across 11 providers — wideband 48.5 vs best single provider 8.2" width="100%">
 </p>
 
 # wideband
