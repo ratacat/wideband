@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wideband.local/protoblocks/case.schema.json",
+  "title": "Protoblock Case",
+  "type": "object",
+  "required": ["id", "q", "tags"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "q": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expectedDomains": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expectedUrls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "category": {
+      "type": "string"
+    },
+    "market": {
+      "type": "object",
+      "description": "Optional Polymarket metadata."
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

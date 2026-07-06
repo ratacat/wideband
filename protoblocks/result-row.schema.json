@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wideband.local/protoblocks/result-row.schema.json",
+  "title": "Protoblock Result Row",
+  "type": "object",
+  "required": [
+    "runId",
+    "timestamp",
+    "experiment",
+    "caseId",
+    "provider",
+    "query",
+    "mode",
+    "sources",
+    "costUSD",
+    "latencyMs",
+    "stats",
+    "metrics"
+  ],
+  "properties": {
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "experiment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "caseId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Use a provider name, __all__, or all-minus-<provider>."
+    },
+    "query": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["scan", "research", "sweep", "fixture", "manual", "unknown"]
+    },
+    "sources": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of visible sources for this row."
+    },
+    "sourceUrls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "costUSD": {
+      "type": "number",
+      "minimum": 0
+    },
+    "latencyMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stats": {
+      "type": "object",
+      "description": "Raw wideband stats or experiment stats."
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Experiment-specific metrics."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
