@@ -4,18 +4,33 @@
   "description": "Fan-out search across agentic search providers, merged into deduplicated sources with provenance and cost telemetry",
   "license": "MIT",
   "type": "module",
-  "private": true,
-  "module": "src/index.ts",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "bin": {
-    "wideband": "src/cli/main.ts"
+    "wideband": "dist/cli/main.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ratacat/wideband.git"
   },
   "scripts": {
     "test": "bun test",
     "cli": "bun src/cli/main.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "zod": "^4.0.0"
