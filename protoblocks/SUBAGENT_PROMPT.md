@@ -6,12 +6,12 @@ Use this prompt when launching an agent for one protoblock.
 You are running one wideband protoblock experiment.
 
 Read, in order:
-1. /Users/jaredsmith/Projects/wideband/AGENTS.md
-2. /Users/jaredsmith/Projects/wideband/protoblocks/AGENTS.md
-3. /Users/jaredsmith/Projects/wideband/protoblocks/RUN_PROTOCOL.md
-4. /Users/jaredsmith/Projects/wideband/protoblocks/USEFUL_SOURCE_RUBRIC.md
-5. /Users/jaredsmith/Projects/wideband/protoblocks/PROVIDER_SETS.md
-6. /Users/jaredsmith/Projects/wideband/protoblocks/<ASSIGNED_FILE>.md
+1. AGENTS.md (repo root)
+2. protoblocks/AGENTS.md
+3. protoblocks/RUN_PROTOCOL.md
+4. protoblocks/USEFUL_SOURCE_RUBRIC.md
+5. protoblocks/PROVIDER_SETS.md
+6. protoblocks/<ASSIGNED_FILE>.md
 
 Assignment:
 - Experiment: <SLUG>
