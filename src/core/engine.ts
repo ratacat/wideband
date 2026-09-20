@@ -26,7 +26,7 @@ type ProviderInfo = {
   name: string
   configured: boolean
   keyPresent: boolean
-  envKey: string
+  envKey?: string
   costModel: ProviderAdapter['costModel']
   capabilities: ProviderAdapter['capabilities']
   month: { calls: number; usd: number }
@@ -136,6 +136,9 @@ export class Engine {
     const query = UnifiedQuery.parse(queryInput)
     const started = Date.now()
     const selected = this.selectAdapters(opts.providers)
+    if (query.googlePages !== undefined && !selected.some(adapter => adapter.name === 'google')) {
+      throw new WidebandError('INVALID_ARGS', 'googlePages requires selecting the google provider', ['use --providers google'], 2)
+    }
     const providerStats: Record<string, ProviderCallStats> = {}
     const runnable: { adapter: ProviderAdapter; key: string }[] = []
 
@@ -144,12 +147,12 @@ export class Engine {
         providerStats[adapter.name] = { status: 'skipped:capability', hits: 0, uniqueContributed: 0, latencyMs: 0 }
         continue
       }
-      const key = this.getKey(adapter.envKey)
-      if (!key) {
+      const key = adapter.envKey ? this.getKey(adapter.envKey) : ''
+      if (adapter.envKey && !key) {
         providerStats[adapter.name] = { status: 'skipped:nokey', hits: 0, uniqueContributed: 0, latencyMs: 0 }
         continue
       }
-      runnable.push({ adapter, key })
+      runnable.push({ adapter, key: key ?? '' })
     }
 
     if (runnable.length === 0) {
@@ -177,7 +180,7 @@ export class Engine {
     }
 
     const outcomes = await Promise.all(
-      included.map(({ adapter, key }) => this.callAdapter(adapter, key, query, opts.timeoutMs ?? 10_000)),
+      included.map(({ adapter, key }) => this.callAdapter(adapter, key, query, opts.timeoutMs ?? adapter.timeoutMs ?? 10_000)),
     )
 
     const allHits: Hit[] = []
@@ -265,12 +268,12 @@ export class Engine {
   providerInfo(): ProviderInfo[] {
     const mtd = this.ledger.monthToDate()
     return this.adapters.map((adapter) => {
-      const keyPresent = Boolean(this.getKey(adapter.envKey))
+      const keyPresent = adapter.envKey ? Boolean(this.getKey(adapter.envKey)) : false
       const month = mtd.providers[adapter.name] ?? { calls: 0, usd: 0 }
       const quotaLimit = monthlyQuota(adapter.costModel)
       return {
         name: adapter.name,
-        configured: keyPresent,
+        configured: !adapter.envKey || keyPresent,
         keyPresent,
         envKey: adapter.envKey,
         costModel: adapter.costModel,

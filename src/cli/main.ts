@@ -19,6 +19,8 @@ const HELP = `wideband — fan-out search across providers, merged unique source
   doctor          live-validate keys
   schema [type]   JSON Schema for outputs
 flags:
+  --google-pages N fetch up to 1–10 Google pages (default 1; Google is included by default)
+  --max N         results per provider, 1–100; defaults to 10 × Google pages when specified
   --hours N       filter to content published within the last N hours
   --after VALUE   filter to content after an ISO timestamp or YYYY-MM-DD
   --before VALUE  filter to content before an ISO timestamp or YYYY-MM-DD
@@ -32,6 +34,7 @@ const DEFAULT_FIELDS: (keyof SourceType)[] = ['id', 'url', 'title', 'snippet', '
 const options = {
   providers: { type: 'string' },
   max: { type: 'string' },
+  'google-pages': { type: 'string' },
   budget: { type: 'string' },
   timeout: { type: 'string' },
   session: { type: 'string' },
@@ -55,6 +58,7 @@ const options = {
 type CliValues = {
   providers?: string
   max?: string
+  'google-pages'?: string
   budget?: string
   timeout?: string
   session?: string
@@ -221,7 +225,7 @@ function prettyProviders(providers: ReturnType<Engine['providerInfo']>) {
   return providers
     .map((p) => {
       const quota = p.quota ? ` quota ${p.quota.used}/${p.quota.limit}` : ''
-      return `${p.name}: ${p.keyPresent ? 'key' : 'missing'} ${p.costModel.kind}${quota}`
+      return `${p.name}: ${p.keyPresent ? 'key' : p.configured ? 'no API key' : 'missing'} ${p.costModel.kind}${quota}`
     })
     .join('\n')
 }
@@ -260,12 +264,14 @@ async function run() {
     if (command === 'scan' || command === 'research') {
       const q = positionals.slice(1).join(' ').trim()
       if (!q) invalid(`${command} requires a query`)
-      const max = intFlag(values.max, '--max', { min: 1, max: 50 })
+      const googlePages = intFlag(values['google-pages'], '--google-pages', { min: 1, max: 10 })
+      const max = intFlag(values.max, '--max', { min: 1, max: 100 }) ?? (googlePages === undefined ? undefined : googlePages * 10)
       const freshness = buildFreshness(values)
       const freshnessPolicy = buildFreshnessPolicy(values)
       const query = UnifiedQuery.parse({
         q,
         mode: command,
+        ...(googlePages !== undefined ? { googlePages } : {}),
         ...(max !== undefined ? { max } : {}),
         ...(values.media ? { mediaType: values.media } : {}),
         ...(freshness ? { freshness } : {}),
@@ -306,10 +312,10 @@ async function run() {
 
     if (command === 'doctor') {
       const providers = engine.providerInfo()
-      const missingKeys = providers.filter((p) => !p.keyPresent).map((p) => p.envKey)
+      const missingKeys = providers.flatMap((p) => p.envKey && !p.keyPresent ? [p.envKey] : [])
       const checks: DoctorCheck[] = await Promise.all(
         providers
-          .filter((p) => p.keyPresent)
+          .filter((p) => p.configured)
           .map(async (provider) => {
             try {
               const result = await engine.sweep(

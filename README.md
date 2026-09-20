@@ -12,14 +12,14 @@ A multi-provider **web search API for AI agents**: one query, fanned out across 
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
 
-- **11 provider adapters** — Brave, Desearch, Exa, Jina, Linkup, Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily — behind one `ProviderAdapter` seam. Adding a provider is one file.
+- **12 provider adapters** — Brave, Desearch, Exa, Google, Jina, Linkup, Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google is included in default scans.
 - **Real deduplication** — URL canonicalization (tracking params, fragments, default ports stripped) plus metadata union, so five providers returning the same article yield one Source with five provenance entries.
 - **Reciprocal Rank Fusion** ranking — robust across heterogeneous providers, no score-normalization games.
 - **Cost as a first-class output** — every sweep reports total USD with a per-provider breakdown, preferring provider-reported cost over estimates. `--budget` caps a sweep hard: cheapest providers first, the rest skipped.
 - **Telemetry ledger** — every sweep, provider call, latency, and dollar lands in SQLite. `wideband stats` answers "which provider actually earns its cost?"
 - **Robot-mode CLI** — JSON by default, meaningful exit codes, `--pretty` when a human is watching.
 
-Built on [Bun](https://bun.sh). One runtime dependency (`zod`); everything else is hand-rolled `fetch` and `bun:sqlite`.
+Built on [Bun](https://bun.sh), with Zod for schemas and Cheerio for Google HTML. Google also requires uv, Python, and the optional private proxy package.
 
 ## Quick start
 
@@ -76,7 +76,8 @@ wideband schema       # JSON Schema for outputs
 Key flags:
 
 - `--providers a,b,c` — restrict the fan-out
-- `--max N` — per-provider hit count
+- `--max N` — per-provider hit limit, 1–100; providers can return fewer
+- `--google-pages N` — Google page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include Google
 - `--budget USD` — hard per-sweep cost cap
 - `--hours N` / `--after DATE` / `--before DATE` — freshness window
 - `--freshness strict|balanced|recall` — what to do with undated or stale results (default `balanced`)
@@ -204,11 +205,34 @@ SQLite ledger at `~/.wideband/ledger.db` (override with `WIDEBAND_DB`): every sw
 
 ## Providers
 
+Google is included in default scans alongside configured API providers. An explicit `--providers` list replaces the default set:
+
+```sh
+wideband scan "scuba diving shops bonaire"
+wideband scan "scuba diving shops bonaire" --providers google,brave --google-pages 3
+wideband scan "site:padi.com/dive-center/" --providers google --google-pages 10
+```
+
+Google fetches one page by default, even with `--max 100`. Explicit pagination follows next-page offsets, deduplicates URLs, and stops at the page limit, result limit, or the end of Google's results. Ten pages can produce fewer than 100 unique URLs. Rotating proxy locations can change rankings, so merged pages are not a stable rank-tracking measurement.
+
+The Google adapter needs Bun 1.4+, uv, Python 3.10+, and access to the private `@ratacat/proxies` optional dependency. If installation skipped it, run `bun add --optional git+ssh://git@github.com/ratacat/proxies.git`. The first search installs pinned `curl_cffi==0.16.3` into uv's cache. Warm that dependency before a timed batch with `uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi'`. No Google API key is needed. Missing dependencies return a provider error; they do not prevent other providers from running.
+
+Google currently supports English US web results via `/wml/search`, not image/news/video endpoints or full-page content. Structured domain filters are unsupported; put `site:` operators in the query. Freshness uses Wideband's existing post-filter policy; undated Google snippets do not become verified publication dates. Search and research use the same Google result format.
+
+Residential proxy cooldowns are shared across processes in `~/.wideband/google-proxies.sqlite`: three minutes between uses and 15 minutes after a failed request. The file stores hashes and timestamps, not credentials. Pages make at most three proxy attempts, have a 45-second deadline including waits, and use a 20-second network timeout per attempt. Google has a 120-second sweep timeout unless `--timeout` overrides it. Cancellation terminates the transport process group on macOS/Linux. CAPTCHA, challenge, unknown markup, dependency failure, and exhausted retries remain explicit errors; a failed later page does not return a successful partial batch.
+
+Google's reported cost is zero search-API fees. Proxy bandwidth and inventory costs are not included in Wideband's budget or cost totals. Page depth participates in cache keys. Other providers retain their own result caps and are not paginated by `--google-pages`.
+
+SDK calls use `scan({ q: 'dive shops', googlePages: 3, max: 30 }, { providers: ['google'] })`. MCP `scan` and `research` accept `googlePages` and default `max` from it, matching the CLI. The standalone parser and page client are exported from `wideband/google-search`; that export also runs on Node 22.16+.
+
+Run `bun run build` and `bun testing/google-live.ts` for live CLI checks covering shallow/deep search, cache separation, concurrent processes, cancellation, Google/Brave deduplication, argument validation, and default Google inclusion. This uses real proxies and configured providers.
+
 | Provider | Env key |
 | --- | --- |
 | Brave | `BRAVE_API_KEY` |
 | Desearch | `DESEARCH_API_KEY` |
 | Exa | `EXA_API_KEY` |
+| Google | None; private proxy inventory |
 | Jina | `JINA_API_KEY` |
 | Linkup | `LINKUP_API_KEY` |
 | Nimble | `NIMBLE_API_KEY` |

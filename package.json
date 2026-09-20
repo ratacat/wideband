@@ -29,6 +29,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./google-search": {
+      "types": "./dist/google-search.d.mts",
+      "default": "./dist/google-search.js"
     }
   },
   "bin": {
@@ -49,11 +53,15 @@
     "test": "bun test",
     "cli": "bun src/cli/main.ts",
     "typecheck": "bunx tsc --noEmit",
-    "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts src/mcp/main.ts --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts src/mcp/main.ts src/google-search.mjs --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json && cp src/google-search.d.mts dist/google-search.d.mts",
     "prepublishOnly": "bun run build"
   },
   "dependencies": {
+    "cheerio": "1.2.0",
     "zod": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@ratacat/proxies": "git+ssh://git@github.com/ratacat/proxies.git"
   },
   "devDependencies": {
     "@types/bun": "latest"

@@ -13,7 +13,8 @@ export const UnifiedQuery = z.object({
   q: z.string().min(1),
   mode: z.enum(['scan', 'research']).default('scan'),
   mediaType: z.enum(['web', 'news', 'image', 'video']).default('web'),
-  max: z.number().int().min(1).max(50).default(10),
+  max: z.number().int().min(1).max(100).default(10),
+  googlePages: z.number().int().min(1).max(10).optional(),
   freshness: z
     .object({ after: z.string().optional(), before: z.string().optional() })
     .optional(),
@@ -24,7 +25,6 @@ export const UnifiedQuery = z.object({
 })
 export type UnifiedQuery = z.infer<typeof UnifiedQuery>
 
-/** One normalized result from one provider. Adapter output, pre-merge. */
 export type Hit = {
   provider: string
   rank: number
@@ -47,7 +47,6 @@ export const Provenance = z.object({
 })
 export type Provenance = z.infer<typeof Provenance>
 
-/** The unified media object: one deduplicated content item with full provenance. */
 export const Source = z.object({
   id: z.string(),
   url: z.string(),
@@ -133,7 +132,8 @@ export type AdapterResult = { hits: Hit[]; reportedUSD?: number }
 
 export interface ProviderAdapter {
   name: string
-  envKey: string
+  envKey?: string
+  timeoutMs?: number
   capabilities: Capabilities
   costModel: CostModel
   search(q: UnifiedQuery, ctx: AdapterCtx): Promise<AdapterResult>

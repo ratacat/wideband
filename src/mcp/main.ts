@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-// Thin MCP (Model Context Protocol) server over stdio: newline-delimited JSON-RPC 2.0.
-// Exposes wideband's sweep as `scan` / `research` tools plus a `providers` status tool.
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,7 +15,8 @@ const pkg = z
 
 const SearchArgs = z.object({
   q: z.string().min(1),
-  max: z.number().int().min(1).max(50).optional(),
+  max: z.number().int().min(1).max(100).optional(),
+  googlePages: z.number().int().min(1).max(10).optional(),
   providers: z.array(z.string()).optional(),
   budget: z.number().positive().optional(),
   hours: z.number().positive().optional(),
@@ -27,7 +26,8 @@ const SEARCH_INPUT_SCHEMA = {
   type: 'object',
   properties: {
     q: { type: 'string', description: 'Search query' },
-    max: { type: 'integer', minimum: 1, maximum: 50, description: 'Max sources to return (default 10)' },
+    max: { type: 'integer', minimum: 1, maximum: 100, description: 'Max results per provider (default 10, or 10 per requested Google page)' },
+    googlePages: { type: 'integer', minimum: 1, maximum: 10, description: 'Google page limit, default 1. Google is included unless providers explicitly excludes it.' },
     providers: { type: 'array', items: { type: 'string' }, description: 'Restrict the sweep to these provider names' },
     budget: { type: 'number', description: 'Hard USD cap for the sweep; cheapest providers first' },
     hours: { type: 'number', description: 'Only content published within the last N hours' },
@@ -59,7 +59,8 @@ async function runSearch(mode: 'scan' | 'research', args: unknown) {
   const a = SearchArgs.parse(args)
   const query = {
     q: a.q,
-    ...(a.max !== undefined ? { max: a.max } : {}),
+    ...(a.max !== undefined ? { max: a.max } : a.googlePages !== undefined ? { max: a.googlePages * 10 } : {}),
+    ...(a.googlePages !== undefined ? { googlePages: a.googlePages } : {}),
     ...(a.hours !== undefined
       ? { freshness: { after: new Date(Date.now() - a.hours * 60 * 60 * 1000).toISOString() } }
       : {}),
@@ -78,7 +79,7 @@ async function runSearch(mode: 'scan' | 'research', args: unknown) {
       providers: s.providers,
       score: s.score,
     })),
-    stats: { totalHits: result.stats.totalHits, uniqueSources: result.stats.uniqueSources },
+    stats: result.stats,
     cost: result.cost,
   }
 }
@@ -109,7 +110,7 @@ async function handle(line: string) {
     return
   }
   const { id, method, params } = msg
-  if (method === undefined || id === undefined) return // response or notification: nothing to do
+  if (method === undefined || id === undefined) return
 
   if (method === 'initialize') {
     const requested =
