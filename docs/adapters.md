@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | anyapi | `ANYAPI_API_KEY` | `POST api.getanyapi.com/v1/run/google.search` | Google organic results, about 10 per page; one billed request per page; key falls back to `~/.anyapi/config.json` |
 | Brave | `BRAVE_API_KEY` | `GET api.search.brave.com/res/v1/web/search` | web/news |
-| Google | none | `GET www.google.com/wml/search` through residential proxies | proxies from `WIDEBAND_PROXY_FILE` or `@ratacat/proxies`; uv, Python and `curl_cffi` |
+| Google | none | `GET www.google.com/wml/search` through residential proxies | proxies from `WIDEBAND_PROXY_FILE`; uv, Python and `curl_cffi` |
 | Exa | `EXA_API_KEY` | `POST api.exa.ai/search` | scan uses fast search; research asks for text |
 | Parallel | `PARALLEL_API_KEY` | `POST api.parallel.ai/v1/search` | scan uses basic mode; research uses advanced mode |
 | Perplexity | `PERPLEXITY_API_KEY` | `POST api.perplexity.ai/search` | web |

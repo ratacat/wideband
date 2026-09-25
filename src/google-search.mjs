@@ -129,6 +129,11 @@ function fetchPage(input, signal) {
   });
 }
 
+function proxyUrl(host, port, username, password, protocol = 'http') {
+  const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password ?? '')}@` : '';
+  return `${protocol}://${auth}${host}:${port}`;
+}
+
 function proxyFromLine(line, number) {
   if (line.includes('://')) return line;
   const at = line.lastIndexOf('@');
@@ -136,38 +141,38 @@ function proxyFromLine(line, number) {
   if (!host || !/^\d+$/.test(port ?? '')) throw new SearchError('inventory', `WIDEBAND_PROXY_FILE line ${number} is not host:port, host:port:user:pass, user:pass@host:port or a URL.`);
   const credentials = at > 0 ? line.slice(0, at) : rest.join(':');
   const split = credentials.indexOf(':');
-  const auth = credentials ? `${encodeURIComponent(split < 0 ? credentials : credentials.slice(0, split))}:${encodeURIComponent(split < 0 ? '' : credentials.slice(split + 1))}@` : '';
-  return `http://${auth}${host}:${port}`;
+  return split < 0 ? proxyUrl(host, port, credentials) : proxyUrl(host, port, credentials.slice(0, split), credentials.slice(split + 1));
 }
 
-async function proxyUrls(proxyType) {
+function proxyUrls() {
   const file = process.env.WIDEBAND_PROXY_FILE;
-  if (file) {
-    let text;
-    try { text = readFileSync(file, 'utf8'); }
-    catch { throw new SearchError('inventory', `Cannot read WIDEBAND_PROXY_FILE ${file}.`); }
-    return text.split(/\r?\n/).flatMap((raw, index) => {
-      const line = raw.trim();
-      return line && !line.startsWith('#') ? [proxyFromLine(line, index + 1)] : [];
+  if (!file) throw new SearchError('inventory', 'Set WIDEBAND_PROXY_FILE to a file with one proxy per line.');
+  let text;
+  try { text = readFileSync(file, 'utf8'); }
+  catch { throw new SearchError('inventory', `Cannot read WIDEBAND_PROXY_FILE ${file}.`); }
+  if (text.trimStart().startsWith('[')) {
+    let records;
+    try { records = JSON.parse(text); }
+    catch { throw new SearchError('inventory', 'WIDEBAND_PROXY_FILE is not a valid JSON array.'); }
+    return records.map((record, index) => {
+      if (!record?.host || !/^\d+$/.test(String(record.port))) throw new SearchError('inventory', `WIDEBAND_PROXY_FILE record ${index + 1} needs a host and a port.`);
+      return proxyUrl(record.host, record.port, record.username, record.password, record.protocol);
     });
   }
-  try {
-    const { listProxies, proxyUrl } = await import('@ratacat/proxies');
-    return listProxies(proxyType).map(proxyUrl);
-  } catch {
-    throw new SearchError('inventory', 'Set WIDEBAND_PROXY_FILE to a file with one proxy per line, or install the private @ratacat/proxies package.');
-  }
+  return text.split(/\r?\n/).flatMap((raw, index) => {
+    const line = raw.trim();
+    return line && !line.startsWith('#') ? [proxyFromLine(line, index + 1)] : [];
+  });
 }
 
-export function createSearch(proxyType = 'residential') {
-  if (!['residential', 'mobile'].includes(proxyType)) throw new TypeError('Proxy type must be residential or mobile.');
+export function createSearch() {
   return async function search(query, start = 0, options = {}) {
     if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
     if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
     const deadline = AbortSignal.timeout(45_000);
     const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     signal.throwIfAborted();
-    const pool = (await proxyUrls(proxyType)).map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
+    const pool = proxyUrls().map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
     if (!pool.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
     const failures = [];
     const attempted = new Set();

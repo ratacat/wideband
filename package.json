@@ -60,9 +60,6 @@
     "cheerio": "1.2.0",
     "zod": "^4.0.0"
   },
-  "optionalDependencies": {
-    "@ratacat/proxies": "git+ssh://git@github.com/ratacat/proxies.git"
-  },
   "devDependencies": {
     "@types/bun": "latest"
   },

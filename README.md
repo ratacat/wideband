@@ -217,7 +217,7 @@ wideband scan "site:padi.com/dive-center/" --providers google --google-pages 10
 
 Google fetches one page by default, even with `--max 100`. Explicit pagination follows next-page offsets, deduplicates URLs, and stops at the page limit, result limit, or the end of Google's results. Ten pages can produce fewer than 100 unique URLs. Rotating proxy locations can change rankings, so merged pages are not a stable rank-tracking measurement.
 
-The Google adapter needs Bun 1.4+, uv, Python 3.10+, and residential proxies. Set `WIDEBAND_PROXY_FILE` to a file with one proxy on each line: `host:port:user:pass` (the Webshare download format), `user:pass@host:port`, `host:port`, or a proxy URL. Lines that start with `#` are comments. Without that setting, the adapter reads the private `@ratacat/proxies` optional dependency. The first search installs pinned `curl_cffi==0.16.3` into uv's cache. Warm that dependency before a timed batch with `uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi'`. No Google API key is needed. Missing dependencies return a provider error; they do not prevent other providers from running.
+The Google adapter needs Bun 1.4+, uv, Python 3.10+, and residential proxies. Set `WIDEBAND_PROXY_FILE` to a file with one proxy on each line: `host:port:user:pass` (the Webshare download format), `user:pass@host:port`, `host:port`, or a proxy URL. Lines that start with `#` are comments. A JSON array of `{host, port, username, password}` records also works. Set the variable in the environment or in the package's `.env` file. The first search installs pinned `curl_cffi==0.16.3` into uv's cache. Warm that dependency before a timed batch with `uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi'`. No Google API key is needed. Missing dependencies return a provider error; they do not prevent other providers from running.
 
 Google currently supports English US web results via `/wml/search`, not image/news/video endpoints or full-page content. Structured domain filters are unsupported; put `site:` operators in the query. Freshness uses Wideband's existing post-filter policy; undated Google snippets do not become verified publication dates. Search and research use the same Google result format.
 
@@ -237,7 +237,7 @@ Run `bun run build` and `bun testing/google-live.ts` for live CLI checks coverin
 | Desearch | `DESEARCH_API_KEY` |
 | Exa | `EXA_API_KEY` |
 | anyapi | `ANYAPI_API_KEY`, or `~/.anyapi/config.json` |
-| Google | `WIDEBAND_PROXY_FILE`, or the private proxy package |
+| Google | `WIDEBAND_PROXY_FILE` |
 | Jina | `JINA_API_KEY` |
 | Linkup | `LINKUP_API_KEY` |
 | Nimble | `NIMBLE_API_KEY` |

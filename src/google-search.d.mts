@@ -8,6 +8,6 @@ export class SearchError extends Error {
   constructor(code: string, message: string);
 }
 export function parseResults(html: string, start?: number): ParsedResults;
-export function createSearch(proxyType?: 'residential' | 'mobile'): Search;
+export function createSearch(): Search;
 export const search: Search;
 export function search100(query: string): Promise<ParsedResults & { query: string; pages: number }>;
