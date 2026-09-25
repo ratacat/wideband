@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -129,6 +129,36 @@ function fetchPage(input, signal) {
   });
 }
 
+function proxyFromLine(line, number) {
+  if (line.includes('://')) return line;
+  const at = line.lastIndexOf('@');
+  const [host, port, ...rest] = line.slice(at + 1).split(':');
+  if (!host || !/^\d+$/.test(port ?? '')) throw new SearchError('inventory', `WIDEBAND_PROXY_FILE line ${number} is not host:port, host:port:user:pass, user:pass@host:port or a URL.`);
+  const credentials = at > 0 ? line.slice(0, at) : rest.join(':');
+  const split = credentials.indexOf(':');
+  const auth = credentials ? `${encodeURIComponent(split < 0 ? credentials : credentials.slice(0, split))}:${encodeURIComponent(split < 0 ? '' : credentials.slice(split + 1))}@` : '';
+  return `http://${auth}${host}:${port}`;
+}
+
+async function proxyUrls(proxyType) {
+  const file = process.env.WIDEBAND_PROXY_FILE;
+  if (file) {
+    let text;
+    try { text = readFileSync(file, 'utf8'); }
+    catch { throw new SearchError('inventory', `Cannot read WIDEBAND_PROXY_FILE ${file}.`); }
+    return text.split(/\r?\n/).flatMap((raw, index) => {
+      const line = raw.trim();
+      return line && !line.startsWith('#') ? [proxyFromLine(line, index + 1)] : [];
+    });
+  }
+  try {
+    const { listProxies, proxyUrl } = await import('@ratacat/proxies');
+    return listProxies(proxyType).map(proxyUrl);
+  } catch {
+    throw new SearchError('inventory', 'Set WIDEBAND_PROXY_FILE to a file with one proxy per line, or install the private @ratacat/proxies package.');
+  }
+}
+
 export function createSearch(proxyType = 'residential') {
   if (!['residential', 'mobile'].includes(proxyType)) throw new TypeError('Proxy type must be residential or mobile.');
   return async function search(query, start = 0, options = {}) {
@@ -137,16 +167,7 @@ export function createSearch(proxyType = 'residential') {
     const deadline = AbortSignal.timeout(45_000);
     const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     signal.throwIfAborted();
-    let pool;
-    try {
-      const { listProxies, proxyUrl } = await import('@ratacat/proxies');
-      pool = listProxies(proxyType).map(proxy => {
-        const url = proxyUrl(proxy);
-        return { url, id: createHash('sha256').update(url).digest('hex') };
-      });
-    } catch {
-      throw new SearchError('inventory', 'Install the private @ratacat/proxies package to use Google search.');
-    }
+    const pool = (await proxyUrls(proxyType)).map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
     if (!pool.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
     const failures = [];
     const attempted = new Set();

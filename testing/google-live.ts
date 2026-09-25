@@ -55,7 +55,7 @@ for (const depth of ['0', '11', '1.5']) {
 }
 const unselected = await invoke(['scan', query, '--providers', 'brave', '--google-pages', '2'])
 assert.equal(unselected.code, 2)
-assert(unselected.stderr.includes('requires selecting the google provider'))
+assert(unselected.stderr.includes('requires selecting the google or anyapi provider'))
 
 const timed = await invoke(['scan', query, '--providers', 'google', '--timeout', '150', '--fresh'])
 assert.equal(timed.code, 5)

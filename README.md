@@ -12,14 +12,14 @@ A multi-provider **web search API for AI agents**: one query, fanned out across 
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
 
-- **12 provider adapters** — Brave, Desearch, Exa, Google, Jina, Linkup, Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google is included in default scans.
+- **13 provider adapters** — anyapi (Google results), Brave, Desearch, Exa, Google, Jina, Linkup, Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google is included in default scans.
 - **Real deduplication** — URL canonicalization (tracking params, fragments, default ports stripped) plus metadata union, so five providers returning the same article yield one Source with five provenance entries.
 - **Reciprocal Rank Fusion** ranking — robust across heterogeneous providers, no score-normalization games.
 - **Cost as a first-class output** — every sweep reports total USD with a per-provider breakdown, preferring provider-reported cost over estimates. `--budget` caps a sweep hard: cheapest providers first, the rest skipped.
 - **Telemetry ledger** — every sweep, provider call, latency, and dollar lands in SQLite. `wideband stats` answers "which provider actually earns its cost?"
 - **Robot-mode CLI** — JSON by default, meaningful exit codes, `--pretty` when a human is watching.
 
-Built on [Bun](https://bun.sh), with Zod for schemas and Cheerio for Google HTML. Google also requires uv, Python, and the optional private proxy package.
+Built on [Bun](https://bun.sh), with Zod for schemas and Cheerio for Google HTML. Google also requires uv, Python, and residential proxies.
 
 ## Quick start
 
@@ -192,6 +192,8 @@ As configured in the adapters (modeled estimate; provider-reported dollars overr
 | Parallel | $0.005/req | signup credits |
 | Perplexity | $0.005/req | signup credits |
 | Nimble | $0.005/req | trial workspace |
+| anyapi | $0.0004/req (Google results, one page) | prepaid balance |
+| Google | $0/req; you pay for the proxies | your proxy plan |
 
 Free tiers cover a lot: with the four free-tier providers alone you get thousands of sweeps per month at $0.
 
@@ -215,13 +217,15 @@ wideband scan "site:padi.com/dive-center/" --providers google --google-pages 10
 
 Google fetches one page by default, even with `--max 100`. Explicit pagination follows next-page offsets, deduplicates URLs, and stops at the page limit, result limit, or the end of Google's results. Ten pages can produce fewer than 100 unique URLs. Rotating proxy locations can change rankings, so merged pages are not a stable rank-tracking measurement.
 
-The Google adapter needs Bun 1.4+, uv, Python 3.10+, and access to the private `@ratacat/proxies` optional dependency. If installation skipped it, run `bun add --optional git+ssh://git@github.com/ratacat/proxies.git`. The first search installs pinned `curl_cffi==0.16.3` into uv's cache. Warm that dependency before a timed batch with `uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi'`. No Google API key is needed. Missing dependencies return a provider error; they do not prevent other providers from running.
+The Google adapter needs Bun 1.4+, uv, Python 3.10+, and residential proxies. Set `WIDEBAND_PROXY_FILE` to a file with one proxy on each line: `host:port:user:pass` (the Webshare download format), `user:pass@host:port`, `host:port`, or a proxy URL. Lines that start with `#` are comments. Without that setting, the adapter reads the private `@ratacat/proxies` optional dependency. The first search installs pinned `curl_cffi==0.16.3` into uv's cache. Warm that dependency before a timed batch with `uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi'`. No Google API key is needed. Missing dependencies return a provider error; they do not prevent other providers from running.
 
 Google currently supports English US web results via `/wml/search`, not image/news/video endpoints or full-page content. Structured domain filters are unsupported; put `site:` operators in the query. Freshness uses Wideband's existing post-filter policy; undated Google snippets do not become verified publication dates. Search and research use the same Google result format.
 
 Residential proxy cooldowns are shared across processes in `~/.wideband/google-proxies.sqlite`: three minutes between uses and 15 minutes after a failed request. The file stores hashes and timestamps, not credentials. Pages make at most three proxy attempts, have a 45-second deadline including waits, and use a 20-second network timeout per attempt. Google has a 120-second sweep timeout unless `--timeout` overrides it. Cancellation terminates the transport process group on macOS/Linux. CAPTCHA, challenge, unknown markup, dependency failure, and exhausted retries remain explicit errors; a failed later page does not return a successful partial batch.
 
-Google's reported cost is zero search-API fees. Proxy bandwidth and inventory costs are not included in Wideband's budget or cost totals. Page depth participates in cache keys. Other providers retain their own result caps and are not paginated by `--google-pages`.
+The `anyapi` provider returns Google results through the [anyapi](https://getanyapi.com) `google.search` API at $0.0004 per page, with no proxies, uv, or Python. It reads its key from `ANYAPI_API_KEY`, or else from `~/.anyapi/config.json`, the file that the anyapi CLI writes. `--google-pages` also sets its page count, and each page is one billed request.
+
+Google's reported cost is zero search-API fees. Proxy bandwidth and inventory costs are not included in Wideband's budget or cost totals. Page depth participates in cache keys. Providers other than Google and anyapi retain their own result caps and are not paginated by `--google-pages`.
 
 SDK calls use `scan({ q: 'dive shops', googlePages: 3, max: 30 }, { providers: ['google'] })`. MCP `scan` and `research` accept `googlePages` and default `max` from it, matching the CLI. The standalone parser and page client are exported from `wideband/google-search`; that export also runs on Node 22.16+.
 
@@ -232,7 +236,8 @@ Run `bun run build` and `bun testing/google-live.ts` for live CLI checks coverin
 | Brave | `BRAVE_API_KEY` |
 | Desearch | `DESEARCH_API_KEY` |
 | Exa | `EXA_API_KEY` |
-| Google | None; private proxy inventory |
+| anyapi | `ANYAPI_API_KEY`, or `~/.anyapi/config.json` |
+| Google | `WIDEBAND_PROXY_FILE`, or the private proxy package |
 | Jina | `JINA_API_KEY` |
 | Linkup | `LINKUP_API_KEY` |
 | Nimble | `NIMBLE_API_KEY` |

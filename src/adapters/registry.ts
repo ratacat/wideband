@@ -1,4 +1,5 @@
 import type { ProviderAdapter } from '../core/types'
+import { anyapi } from './anyapi'
 import { brave } from './brave'
 import { google } from './google'
 import { desearch } from './desearch'
@@ -12,7 +13,7 @@ import { sailor } from './sailor'
 import { searchx } from './searchx'
 import { tavily } from './tavily'
 
-export const ADAPTERS: ProviderAdapter[] = [brave, exa, parallel, perplexity, tavily, jina, linkup, nimble, desearch, sailor, searchx, google]
+export const ADAPTERS: ProviderAdapter[] = [brave, exa, parallel, perplexity, tavily, jina, linkup, nimble, desearch, sailor, searchx, google, anyapi]
 
 export function getAdapter(name: string): ProviderAdapter | undefined {
   return ADAPTERS.find((adapter) => adapter.name === name.toLowerCase())

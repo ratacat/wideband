@@ -136,8 +136,8 @@ export class Engine {
     const query = UnifiedQuery.parse(queryInput)
     const started = Date.now()
     const selected = this.selectAdapters(opts.providers)
-    if (query.googlePages !== undefined && !selected.some(adapter => adapter.name === 'google')) {
-      throw new WidebandError('INVALID_ARGS', 'googlePages requires selecting the google provider', ['use --providers google'], 2)
+    if (query.googlePages !== undefined && !selected.some(adapter => ['google', 'anyapi'].includes(adapter.name))) {
+      throw new WidebandError('INVALID_ARGS', 'googlePages requires selecting the google or anyapi provider', ['use --providers google or --providers anyapi'], 2)
     }
     const providerStats: Record<string, ProviderCallStats> = {}
     const runnable: { adapter: ProviderAdapter; key: string }[] = []

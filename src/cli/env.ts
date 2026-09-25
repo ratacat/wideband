@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)?\s*$/
@@ -59,4 +60,9 @@ export function loadEnvFile(path: string, env: NodeJS.ProcessEnv = process.env):
 export function loadPackageEnv(): void {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
   loadEnvFile(resolve(root, '.env'))
+  if (process.env.ANYAPI_API_KEY) return
+  try {
+    const config = JSON.parse(readFileSync(join(homedir(), '.anyapi', 'config.json'), 'utf8')) as { apiKey?: unknown }
+    if (typeof config.apiKey === 'string' && config.apiKey.trim()) process.env.ANYAPI_API_KEY = config.apiKey.trim()
+  } catch {}
 }
