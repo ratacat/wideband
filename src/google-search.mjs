@@ -230,7 +230,7 @@ async function reserve(pool) {
       db.exec('COMMIT');
       return { id: null, readyAt };
     }
-    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(readyAt + 180_000, row.id);
+    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(readyAt + 6_000, row.id);
     db.exec('COMMIT');
     return { id: row.id, readyAt };
   } finally {
