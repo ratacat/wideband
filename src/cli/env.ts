@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Schema } from 'effect'
 
 const ENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)?\s*$/
 
@@ -62,7 +63,7 @@ export function loadPackageEnv(): void {
   loadEnvFile(resolve(root, '.env'))
   if (process.env.ANYAPI_API_KEY) return
   try {
-    const config = JSON.parse(readFileSync(join(homedir(), '.anyapi', 'config.json'), 'utf8')) as { apiKey?: unknown }
+    const config = Schema.decodeUnknownSync(Schema.Struct({ apiKey: Schema.optionalKey(Schema.String) }))(JSON.parse(readFileSync(join(homedir(), '.anyapi', 'config.json'), 'utf8')))
     if (typeof config.apiKey === 'string' && config.apiKey.trim()) process.env.ANYAPI_API_KEY = config.apiKey.trim()
   } catch {}
 }

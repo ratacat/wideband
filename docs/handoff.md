@@ -1,39 +1,39 @@
-# wideband - Handoff
+# Wideband implementation handoff
 
-Read [architecture.md](architecture.md) first. It is the source of truth.
+The 0.4 redesign uses Effect 4.0.0 for provider I/O, schemas, request policy, and scoped execution. Read [architecture.md](architecture.md) for current behavior and [effect-4-plan.md](effect-4-plan.md) for the original investigation.
 
-## Current State
+## Public changes
 
-Verified on 2026-06-12:
+- `wideband()` remains a synchronous factory. Search methods return Promises, and `stream()` returns an asynchronous iterator.
+- Await `providers()`, `stats()`, `costs()`, and `close()`. Closing is idempotent and cancels active work before releasing SQLite.
+- Monthly usage exposes `attempts`. Settled provider statistics retain `calls`.
+- Schema exports are Effect Schema values. `parseQuery` and `parseSweepResult` replace direct Zod parsing.
+- Engine and Ledger are internal. `AdapterError`, `LedgerError`, and `WidebandError` are exported.
+- `complete: false` and provider status `partial` expose retained results after incomplete work. Total provider failure rejects SDK calls with the collected result attached. CLI output preserves that result with exit 5.
+- `--stream` emits provider snapshots followed by the final result as NDJSON.
 
-- Runtime: Bun + TypeScript. Runtime dependency: `zod`; storage: `bun:sqlite`.
-- CLI: `wideband` is linked and exposes `scan`, `research`, `providers`, `stats`, `costs`, `doctor`, and `schema`.
-- Tests: `bun run typecheck` passes; `bun test` passes with 34 tests.
-- Built adapters: Brave, Exa, Parallel, Perplexity, Tavily, Jina, Linkup, Nimble, Desearch, Sailor, SearchX.
-- Local keys present: `BRAVE_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`, `TAVILY_API_KEY`, `JINA_API_KEY`, `LINKUP_API_KEY`, `NIMBLE_API_KEY`, `DESEARCH_API_KEY`, `SAILOR_API_KEY`, `SEARCHX_API_KEY`.
-- Live status: all keyed providers validate except Desearch, which reports no balance. Tavily uses a fresh `wideband-20260612` dev key. Nimble uses Fast SERP because AI Search `/v1/search` hangs on the trial workspace.
+## Behavior to preserve
 
-## Modes
+Each dispatched attempt has a durable record and its own budget reservation. Successful earlier pages survive retries and later failures. Unknown charges retain their reservation and remain visible. A storage failure before dispatch prevents spending.
 
-- `wideband scan <query>`: fast source discovery.
-- `wideband research <query>`: heavier provider retrieval for article research.
-- Use `--hours`, `--after`, or `--before` for content freshness; use `--fresh` only to bypass the TTL cache.
-- SDK mirrors the CLI with `wb.scan()` and `wb.research()`. `wb.sweep()` remains the lower-level entry point.
+Only complete successful searches enter the persistent cache. Compatible concurrent calls share execution and accounting. Session claims happen per caller at final delivery. Breaking a stream or cancelling one caller releases that subscription without stopping work needed by others.
 
-## Engine Notes
+Google retains process-group termination, close waiting, Node compatibility, and cross-process proxy pacing. No new runtime configuration settings were introduced.
 
-- Fan-out runs concurrently with `Promise.all`.
-- Each provider has one timeout deadline; retry backoff must fit inside it.
-- Cache keys include the normalized query, included providers, and `capture`.
-- `doctor` checks providers concurrently.
+## Checks
 
-## Candidate Providers
+Run these from the repository root:
 
-No adapters exist yet for these candidates:
+```bash
+bun run typecheck
+bun run test
+bun run build
+```
 
-| Provider | Expected endpoint | Signup/API status |
-| --- | --- | --- |
-| SerpAPI | `GET serpapi.com/search?engine=google` | account email-confirmed; phone verification blocks API key |
-| Search Router | `POST search-router.com/api/search` | blocked: signup is Google OAuth only; no agent-email path found |
+The test command uses local HTTP, SQLite, actual CLI processes, and actual MCP stdio. `testing/google-live.ts` uses real providers and proxies. Preserve the distinction when reporting results.
 
-Use `agent@clearfeed.tech` for signups. Read inbound codes with `cloudmail code --wait 90`. Do not print full keys; store them in `.env` only.
+Live checks during the migration succeeded for Brave, Exa, Desearch, AnyAPI, Tavily, Parallel, and Google. Other configured providers returned quota, rate-limit, server, or timeout errors. Parallel's documented nullable metadata was corrected after the initial live check. Provider credentials and quotas may change independently of the code.
+
+## Later product work
+
+Adaptive provider selection remains outside this migration. It requires measurements of marginal unique sources by query type. Effect does not make synchronous SQLite queries nonblocking or guarantee provider charges match estimates.

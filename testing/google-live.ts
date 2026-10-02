@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { SweepResult } from '../src/core/types'
+import { parseSweepResult } from '../src/core/types'
 
 const cli = fileURLToPath(new URL('../dist/cli/main.js', import.meta.url))
 const query = 'site:padi.com/dive-center/'
@@ -22,7 +22,7 @@ async function invoke(args: string[]) {
 async function scan(args: string[]) {
   const result = await invoke(['scan', query, '--providers', 'google', ...args])
   assert.equal(result.code, 0, result.stderr || result.stdout)
-  const data = SweepResult.parse(JSON.parse(result.stdout))
+  const data = parseSweepResult(JSON.parse(result.stdout))
   assert.equal(data.stats.providers.google?.status, 'ok')
   assert(data.sources.every(source => source.providers.includes('google')))
   return data
@@ -59,19 +59,19 @@ assert(unselected.stderr.includes('requires selecting the google or anyapi provi
 
 const timed = await invoke(['scan', query, '--providers', 'google', '--timeout', '150', '--fresh'])
 assert.equal(timed.code, 5)
-const timeout = SweepResult.parse(JSON.parse(timed.stdout))
+const timeout = parseSweepResult(JSON.parse(timed.stdout))
 assert.equal(timeout.stats.providers.google?.status, 'timeout')
 assert.equal(timeout.sources.length, 0)
 
 const combined = await invoke(['scan', 'site:vipdiving.com', '--providers', 'google,brave', '--fresh'])
 assert.equal(combined.code, 0)
-const merged = SweepResult.parse(JSON.parse(combined.stdout))
+const merged = parseSweepResult(JSON.parse(combined.stdout))
 assert.equal(merged.stats.providers.google?.status, 'ok')
 assert.equal(merged.stats.providers.brave?.status, 'ok')
 assert(merged.sources.some(source => source.providers.includes('google') && source.providers.includes('brave')))
 
 const normal = await invoke(['scan', query, '--max', '1', '--fresh'])
 assert.equal(normal.code, 0)
-assert.equal(SweepResult.parse(JSON.parse(normal.stdout)).stats.providers.google?.status, 'ok')
+assert.equal(parseSweepResult(JSON.parse(normal.stdout)).stats.providers.google?.status, 'ok')
 
 process.stdout.write(`${JSON.stringify({ onePage: shallow.sources.length, threePages: deep.sources.length, tenPages: hundred.sources.length, combined: merged.sources.length, cache: 'passed', validation: 'passed', cancellation: 'passed', concurrent: 'passed', defaultGoogle: 'passed' })}\n`)

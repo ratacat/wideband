@@ -1,4 +1,4 @@
-import type { FreshnessConfidence, Hit, Source } from './types'
+import type { FreshnessConfidence, Hit, MutableSource, Source } from './types'
 
 const TRACKING_PARAM = /^(utm_\w+|fbclid|gclid|msclkid|igshid|mc_cid|mc_eid|ref|ref_src)$/i
 const RRF_K = 60
@@ -51,16 +51,15 @@ function bestFreshness(a: FreshnessConfidence, b: FreshnessConfidence): Freshnes
   return FRESHNESS_RANK[a] >= FRESHNESS_RANK[b] ? a : b
 }
 
-function addFreshness(source: Source, hit: Hit) {
+function addFreshness(source: MutableSource, hit: Hit) {
   if (!hit.freshness) return
   source.freshness ??= { confidence: hit.freshness.confidence, providers: {} }
   source.freshness.providers[hit.provider] = hit.freshness.confidence
   source.freshness.confidence = bestFreshness(source.freshness.confidence, hit.freshness.confidence)
 }
 
-/** Merge per-provider Hits into deduplicated Sources, RRF-ranked. */
 export function mergeHits(hits: Hit[]): Source[] {
-  const byId = new Map<string, Source>()
+  const byId = new Map<string, MutableSource>()
 
   for (const hit of hits) {
     const url = canonicalizeUrl(hit.url)
@@ -100,7 +99,6 @@ export function mergeHits(hits: Hit[]): Source[] {
 
     const prior = existing.provenance.find((p) => p.provider === hit.provider)
     if (prior) {
-      // a provider returned the same URL twice — keep its best rank
       if (hit.rank < prior.rank) prior.rank = hit.rank
     } else {
       existing.provenance.push({

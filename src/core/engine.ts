@@ -1,276 +1,706 @@
 import { randomUUID } from 'node:crypto'
-import { AdapterError } from './errors'
-import { estimateUSD, monthlyQuota, roundUSD } from './cost'
+import { Cache, Cause, Effect, Exit, Result, Schedule, Semaphore } from 'effect'
+import type { HttpClient } from 'effect/http'
+import { AdapterError, LedgerError, safeErrorMessage, WidebandError } from './errors'
+import {
+  chargeMicroUSD,
+  estimateUSD,
+  monthlyQuota,
+  roundUSD,
+  summarizeCharges,
+  toMicroUSD,
+} from './cost'
 import { mergeHits, sha256, stableStringify } from './merge'
 import { Ledger } from './ledger'
 import { classifyFreshness } from './freshness'
 import {
-  FreshnessPolicy,
-  ProviderCallStats,
-  ProviderFreshnessStats,
-  SweepResult,
-  UnifiedQuery,
-  type CostBasis,
+  parseQuery,
+  parseSweepOptions,
+  type AdapterCtx,
+  type AttemptFinish,
+  type Charge,
+  type DeepMutable,
   type FreshnessConfidence,
   type Hit,
   type ProviderAdapter,
+  type ProviderCallStats,
+  type ProviderFreshnessStats,
+  type ProviderRequest,
   type SweepOptions,
+  type SweepProviderEvent,
+  type SweepResult,
+  type UnifiedQuery,
 } from './types'
-import { WidebandError } from './errors'
 
-type EngineOptions = {
-  getKey?: (envKey: string) => string | undefined
-}
-
-type ProviderInfo = {
+type EngineOptions = { getKey?: (envKey: string) => string | undefined }
+export type ProviderInfo = {
   name: string
   configured: boolean
   keyPresent: boolean
   envKey?: string
   costModel: ProviderAdapter['costModel']
   capabilities: ProviderAdapter['capabilities']
-  month: { calls: number; usd: number }
+  month: { attempts: number; usd: number; unknownAttempts: number }
   quota?: { limit: number; used: number }
 }
-
-type CallOutcome =
-  | { ok: true; provider: string; hits: Hit[]; reportedUSD?: number; latencyMs: number }
-  | { ok: false; provider: string; error: AdapterError; latencyMs: number }
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+type EngineError = WidebandError | LedgerError
+type Observer = (event: SweepProviderEvent) => void
+type Flight = {
+  key: string
+  query: UnifiedQuery
+  opts: SweepOptions
+  kind: 'sweep' | 'doctor'
+  providers: { adapter: ProviderAdapter; key: string }[]
+  observers: Set<Observer>
+  history: SweepProviderEvent[]
+  users: number
+}
+type ProviderState = {
+  adapter: ProviderAdapter
+  key: string
+  hits: Hit[]
+  charges: Charge[]
+  startedAt: number
+  latencyMs: number
+  status?: ProviderCallStats['status']
+  error?: AdapterError
+  freshness?: DeepMutable<ProviderFreshnessStats>
+}
+type EngineState = {
+  adapters: readonly ProviderAdapter[]
+  ledger: Ledger
+  getKey: (envKey: string) => string | undefined
+  flights: Map<string, Flight>
+  pacing: Map<string, { gate: Semaphore.Semaphore; nextAt: number }>
+}
+type SweepState = {
+  sweepId: string
+  query: UnifiedQuery
+  startedAt: number
+  providers: ProviderState[]
+  skipped: Record<string, ProviderCallStats>
+  budgetMicroUSD?: number
+  budgetUsedMicroUSD: number
 }
 
-function isRetryable(error: AdapterError) {
-  return error.code === 'rate_limit' || (typeof error.httpStatus === 'number' && error.httpStatus >= 500)
+function ledgerCall<A>(
+  operation: string,
+  run: () => A,
+  attempt?: AttemptFinish,
+): Effect.Effect<A, LedgerError> {
+  return Effect.try({
+    try: run,
+    catch: (error) => new LedgerError(operation, safeErrorMessage(error), attempt),
+  })
 }
 
-function toAdapterError(error: unknown, aborted: boolean): AdapterError {
-  if (error instanceof AdapterError) return error
-  if (aborted || (error instanceof Error && error.name === 'AbortError')) {
-    return new AdapterError('timeout', 'Provider request timed out')
+function clone<A>(value: A): A {
+  return structuredClone(value)
+}
+function freeze<A>(value: A): A {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) freeze(child)
+    Object.freeze(value)
   }
-  return new AdapterError('provider_error', error instanceof Error ? error.message : 'Provider request failed')
+  return value
 }
-
-function providerStatus(error: AdapterError): ProviderCallStats['status'] {
-  return error.code === 'timeout' ? 'timeout' : 'error'
+function roundScore(value: number): number {
+  return Math.round(value * 1e9) / 1e9
 }
-
-function hasDomainFilters(query: UnifiedQuery): boolean {
-  return Boolean(query.domains?.include?.length || query.domains?.exclude?.length)
+function stats(status: ProviderCallStats['status']): ProviderCallStats {
+  return { status, hits: 0, uniqueContributed: 0, latencyMs: 0, attempts: 0 }
 }
 
 function lacksCapability(adapter: ProviderAdapter, query: UnifiedQuery): boolean {
-  if (!adapter.capabilities.mediaTypes.includes(query.mediaType)) return true
-  if (hasDomainFilters(query) && !adapter.capabilities.domainFilters) return true
-  return false
+  return (
+    !adapter.capabilities.mediaTypes.includes(query.mediaType) ||
+    Boolean(
+      (query.domains?.include?.length || query.domains?.exclude?.length) &&
+      !adapter.capabilities.domainFilters,
+    )
+  )
 }
 
-function roundScore(n: number): number {
-  return Math.round(n * 1e9) / 1e9
-}
-
-function timeoutOutcome(provider: string, started: number): CallOutcome {
-  return {
-    ok: false,
-    provider,
-    error: new AdapterError('timeout', 'Provider request timed out'),
-    latencyMs: Date.now() - started,
-  }
-}
-
-type FreshnessDecision = {
-  keep: boolean
-  confidence?: FreshnessConfidence
-  classification?: 'within' | 'stale' | 'undated'
-  dropped?: 'stale' | 'undated'
-}
-
-function decideFreshness(hit: Hit, adapter: ProviderAdapter, query: UnifiedQuery): FreshnessDecision {
-  if (!query.freshness) return { keep: true }
-
+function annotateHit(hit: Hit, state: ProviderState, query: UnifiedQuery): Hit | undefined {
+  if (!query.freshness) return hit
   const classification = classifyFreshness(hit.publishedAt, query.freshness)
-  if (classification === 'within') {
-    return { keep: true, confidence: adapter.capabilities.freshness ? 'native' : 'verified', classification }
+  let confidence: FreshnessConfidence
+  if (classification === 'within')
+    confidence = state.adapter.capabilities.freshness ? 'native' : 'verified'
+  else if (classification === 'undated') {
+    if (state.adapter.capabilities.freshness) confidence = 'native'
+    else if (query.freshnessPolicy === 'strict') {
+      if (state.freshness) state.freshness.droppedUndated += 1
+      return undefined
+    } else confidence = 'undated'
+  } else if (classification === 'stale') {
+    if (query.freshnessPolicy !== 'recall') {
+      if (state.freshness) state.freshness.droppedStale += 1
+      return undefined
+    }
+    confidence = 'stale'
+  } else return hit
+  if (state.freshness) {
+    state.freshness.kept += 1
+    if (classification === 'undated') state.freshness.keptUndated += 1
+    if (classification === 'stale') state.freshness.keptStale += 1
   }
-
-  if (classification === 'undated') {
-    if (adapter.capabilities.freshness) return { keep: true, confidence: 'native', classification }
-    if (query.freshnessPolicy === 'strict') return { keep: false, dropped: 'undated' }
-    return { keep: true, confidence: 'undated', classification }
-  }
-
-  if (classification === 'stale') {
-    if (query.freshnessPolicy === 'recall') return { keep: true, confidence: 'stale', classification }
-    return { keep: false, dropped: 'stale' }
-  }
-
-  return { keep: true }
+  return { ...hit, freshness: { confidence } }
 }
 
-function emptyFreshnessStats(adapter: ProviderAdapter, policy: FreshnessPolicy): ProviderFreshnessStats {
-  return {
-    support: adapter.capabilities.freshness ? 'native' : 'post-filter',
-    policy,
-    kept: 0,
-    keptUndated: 0,
-    keptStale: 0,
-    droppedStale: 0,
-    droppedUndated: 0,
+function buildResult(state: SweepState): SweepResult {
+  const allHits = state.providers.flatMap((provider) => provider.hits)
+  const sources = mergeHits(allHits).map((source) => ({
+    ...source,
+    score: roundScore(source.score),
+  }))
+  const providers: Record<string, ProviderCallStats> = { ...state.skipped }
+  const byProvider: SweepResult['cost']['byProvider'] = Object.fromEntries(
+    state.providers
+      .filter((provider) => provider.charges.length > 0)
+      .map((provider) => [provider.adapter.name, summarizeCharges(provider.charges)]),
+  )
+  for (const provider of state.providers) {
+    providers[provider.adapter.name] = {
+      status: provider.status ?? 'cancelled',
+      hits: provider.hits.length,
+      uniqueContributed: sources.filter((source) => source.uniqueTo === provider.adapter.name)
+        .length,
+      latencyMs: provider.latencyMs,
+      attempts: provider.charges.length,
+      ...(provider.freshness ? { freshness: provider.freshness } : {}),
+      ...(provider.error
+        ? {
+            error: {
+              code: provider.error.code,
+              message: safeErrorMessage(provider.error, [provider.key]),
+            },
+          }
+        : {}),
+    }
   }
+  const complete =
+    state.providers.every((provider) => provider.status === 'ok') &&
+    !Object.values(state.skipped).some((provider) => provider.status === 'skipped:budget')
+  return {
+    sweepId: state.sweepId,
+    query: state.query,
+    complete,
+    sources,
+    stats: {
+      totalHits: allHits.length,
+      uniqueSources: sources.length,
+      overlapPct: allHits.length ? roundScore(1 - sources.length / allHits.length) : 0,
+      providers,
+    },
+    cost: {
+      totalUSD: roundUSD(Object.values(byProvider).reduce((sum, cost) => sum + cost.usd, 0)),
+      unknownAttempts: Object.values(byProvider).reduce(
+        (sum, cost) => sum + cost.unknownAttempts,
+        0,
+      ),
+      byProvider,
+    },
+    timing: { totalMs: Date.now() - state.startedAt },
+  }
+}
+
+function broadcast(flight: Flight, event: SweepProviderEvent) {
+  const saved = freeze(clone(event))
+  flight.history.push(saved)
+  for (const observer of flight.observers) observer(clone(saved))
+}
+
+function executeRequest<A>(
+  engine: EngineState,
+  sweep: SweepState,
+  provider: ProviderState,
+  request: ProviderRequest<A>,
+): Effect.Effect<A, AdapterError | LedgerError, HttpClient.HttpClient> {
+  const model = estimateUSD(provider.adapter.costModel)
+  const estimate = request.estimateMicroUSD ?? toMicroUSD(model.usd)
+  if (!Number.isSafeInteger(estimate) || estimate < 0)
+    return Effect.die(new RangeError('Request estimate must be a nonnegative integer'))
+  const pacing = engine.pacing.get(provider.adapter.name)
+  if (!pacing) return Effect.die(new Error('Provider pacing state is missing'))
+  const attempt = pacing.gate.withPermit(
+    Effect.gen(function* () {
+      const ordinal = (yield* Schedule.CurrentMetadata).attempt + 1
+      const wait = pacing.nextAt - Date.now()
+      if (wait > 0) yield* Effect.sleep(wait)
+      let finish: AttemptFinish | undefined
+      const run = Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          if (
+            sweep.budgetMicroUSD !== undefined &&
+            sweep.budgetUsedMicroUSD + estimate > sweep.budgetMicroUSD
+          )
+            return yield* Effect.fail(
+              new AdapterError('budget', 'Budget excludes this request attempt'),
+            )
+          sweep.budgetUsedMicroUSD += estimate
+          const attemptId = `at_${randomUUID()}`
+          yield* ledgerCall('startAttempt', () =>
+            engine.ledger.startAttempt({
+              attemptId,
+              sweepId: sweep.sweepId,
+              provider: provider.adapter.name,
+              requestId: request.requestId,
+              ordinal,
+              startedAt: Date.now(),
+              estimateMicroUSD: estimate,
+              basis: model.basis,
+            }),
+          ).pipe(
+            Effect.catchTag('LedgerError', (error) => {
+              sweep.budgetUsedMicroUSD -= estimate
+              return Effect.fail(error)
+            }),
+          )
+          const chargeIndex =
+            provider.charges.push({ kind: 'unknown', estimateMicroUSD: estimate }) - 1
+          finish = {
+            attemptId,
+            finishedAt: Date.now(),
+            status: 'cancelled',
+            charge: { kind: 'unknown', estimateMicroUSD: estimate },
+            errorCode: 'cancelled',
+          }
+          const received = yield* restore(Effect.result(request.run))
+          const result = Result.isSuccess(received)
+            ? received.success.result
+            : Result.fail(received.failure)
+          const reported = Result.isSuccess(received)
+            ? received.success.reportedMicroUSD
+            : undefined
+          const charge: Charge =
+            reported !== undefined
+              ? { kind: 'observed', microUSD: reported }
+              : Result.isSuccess(received)
+                ? { kind: 'estimated', microUSD: estimate, basis: model.basis }
+                : { kind: 'unknown', estimateMicroUSD: estimate }
+          provider.charges[chargeIndex] = charge
+          sweep.budgetUsedMicroUSD += chargeMicroUSD(charge) - estimate
+          const error = Result.isFailure(result) ? result.failure : undefined
+          finish = {
+            attemptId,
+            finishedAt: Date.now(),
+            status: error ? 'error' : 'ok',
+            charge,
+            ...(error?.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+            ...(error ? { errorCode: error.code } : {}),
+          }
+          if (error?.code === 'rate_limit' && error.httpStatus === 429)
+            pacing.nextAt = Math.max(pacing.nextAt, Date.now() + (error.retryAfterMs ?? 300))
+          return yield* Effect.fromResult(result)
+        }),
+      )
+      return yield* Effect.onExit(run, () => {
+        const completed = finish
+        return completed
+          ? ledgerCall(
+              'finishAttempt',
+              () => engine.ledger.finishAttempt({ ...completed, finishedAt: Date.now() }),
+              completed,
+            )
+          : Effect.void
+      })
+    }),
+  )
+  const schedule = Schedule.recurs(1).pipe(
+    Schedule.addDelay(({ input }: Schedule.Metadata<number, AdapterError | LedgerError>) =>
+      Effect.succeed(
+        input instanceof AdapterError
+          ? (input.retryAfterMs ?? 300 + Math.floor(Math.random() * 501))
+          : 0,
+      ),
+    ),
+  )
+  return Effect.retry(attempt, {
+    schedule,
+    while: (error) =>
+      error instanceof AdapterError &&
+      request.retryable !== false &&
+      provider.charges.at(-1)?.kind !== 'unknown' &&
+      (error.code === 'rate_limit' ||
+        (error.code === 'provider_error' &&
+          error.httpStatus !== undefined &&
+          error.httpStatus >= 500 &&
+          error.httpStatus <= 599)),
+  })
+}
+
+function executeSweep(
+  engine: EngineState,
+  flight: Flight,
+): Effect.Effect<SweepResult, EngineError, HttpClient.HttpClient> {
+  return Effect.suspend(() => {
+    const query = flight.query
+    const skipped: Record<string, ProviderCallStats> = {}
+    const providers: ProviderState[] = []
+    for (const { adapter, key } of flight.providers) {
+      if (lacksCapability(adapter, query)) skipped[adapter.name] = stats('skipped:capability')
+      else if (adapter.envKey && !key) skipped[adapter.name] = stats('skipped:nokey')
+      else
+        providers.push({
+          adapter,
+          key,
+          hits: [],
+          charges: [],
+          startedAt: 0,
+          latencyMs: 0,
+          ...(query.freshness
+            ? {
+                freshness: {
+                  support: adapter.capabilities.freshness ? 'native' : 'post-filter',
+                  policy: query.freshnessPolicy,
+                  kept: 0,
+                  keptUndated: 0,
+                  keptStale: 0,
+                  droppedStale: 0,
+                  droppedUndated: 0,
+                },
+              }
+            : {}),
+        })
+    }
+    if (!providers.length)
+      return Effect.fail(
+        new WidebandError(
+          'NO_PROVIDERS',
+          'No providers can run this query',
+          ['set provider API keys', 'run: wideband providers'],
+          3,
+        ),
+      )
+    providers.sort(
+      (a, b) => estimateUSD(a.adapter.costModel).usd - estimateUSD(b.adapter.costModel).usd,
+    )
+    const state: SweepState = {
+      sweepId: `sw_${randomUUID().slice(0, 12)}`,
+      query,
+      startedAt: Date.now(),
+      providers,
+      skipped,
+      budgetUsedMicroUSD: 0,
+      ...(flight.opts.budget === undefined
+        ? {}
+        : { budgetMicroUSD: Math.floor(flight.opts.budget * 1e6 + 1e-8) }),
+    }
+    let began = false
+    let recorded = false
+    const program = Effect.gen(function* () {
+      const ttl = flight.opts.ttlSec ?? Number(process.env.WIDEBAND_CACHE_TTL ?? 900)
+      if (!flight.opts.fresh && flight.kind === 'sweep') {
+        const cached = yield* ledgerCall('cacheGet', () =>
+          engine.ledger.cacheGet(flight.key, Number.isFinite(ttl) ? ttl : 900),
+        )
+        if (cached)
+          return freeze({
+            ...cached,
+            cached: true as const,
+            cost: { totalUSD: 0, unknownAttempts: 0, byProvider: {} },
+          })
+      }
+      yield* ledgerCall('beginSweep', () =>
+        engine.ledger.beginSweep({ sweepId: state.sweepId, query, kind: flight.kind }),
+      )
+      began = true
+      yield* Effect.forEach(
+        providers,
+        (provider) => {
+          provider.startedAt = Date.now()
+          const context: AdapterCtx = {
+            key: provider.key,
+            request: (request) => executeRequest(engine, state, provider, request),
+            addHits: (hits) =>
+              Effect.sync(() => {
+                for (const hit of hits) {
+                  if (provider.hits.length >= query.max) break
+                  const annotated = annotateHit(hit, provider, query)
+                  if (annotated) {
+                    const { raw, ...rest } = annotated
+                    provider.hits.push(flight.opts.capture ? annotated : rest)
+                  }
+                }
+              }),
+          }
+          const search = Effect.suspend(() => provider.adapter.search(query, context)).pipe(
+            Effect.timeoutOrElse({
+              duration: flight.opts.timeoutMs ?? provider.adapter.timeoutMs ?? 10000,
+              orElse: () => Effect.fail(new AdapterError('timeout', 'Provider request timed out')),
+            }),
+            Effect.catchTag('AdapterError', (error) =>
+              Effect.sync(() => {
+                provider.error = error
+                provider.status = provider.hits.length
+                  ? 'partial'
+                  : error.code === 'budget' && !provider.charges.length
+                    ? 'skipped:budget'
+                    : error.code === 'timeout'
+                      ? 'timeout'
+                      : 'error'
+              }),
+            ),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                provider.status ??= 'ok'
+              }),
+            ),
+          )
+          return Effect.onExit(search, (exit) =>
+            Effect.sync(() => {
+              provider.latencyMs = Date.now() - provider.startedAt
+              if (Exit.isFailure(exit))
+                provider.status = Cause.hasInterrupts(exit.cause) ? 'cancelled' : 'error'
+              broadcast(flight, {
+                kind: 'provider',
+                sweepId: state.sweepId,
+                provider: provider.adapter.name,
+                status: provider.status ?? 'error',
+                sources: buildResult(state).sources,
+              })
+            }),
+          )
+        },
+        { concurrency: 'unbounded', discard: true },
+      )
+      const result = freeze(clone(buildResult(state)))
+      const hasUsableResult = providers.some(
+        (provider) =>
+          provider.status === 'ok' || (provider.status === 'partial' && provider.hits.length > 0),
+      )
+      yield* ledgerCall('finishSweep', () =>
+        engine.ledger.finishSweep(
+          result,
+          flight.kind,
+          hasUsableResult ? (result.complete ? 'complete' : 'partial') : 'failed',
+        ),
+      )
+      recorded = true
+      if (!hasUsableResult) {
+        const budgetOnly = providers.every((provider) => provider.error?.code === 'budget')
+        return yield* Effect.fail(
+          new WidebandError(
+            budgetOnly ? 'BUDGET_TOO_LOW' : 'ALL_PROVIDERS_FAILED',
+            budgetOnly
+              ? 'Budget excludes all runnable requests'
+              : 'Every attempted provider failed',
+            budgetOnly
+              ? ['increase --budget']
+              : ['inspect provider errors', 'run: wideband doctor'],
+            budgetOnly ? 4 : 1,
+            result,
+          ),
+        )
+      }
+      if (result.complete && flight.kind === 'sweep')
+        yield* ledgerCall('cachePut', () => engine.ledger.cachePut(flight.key, result))
+      return result
+    })
+    return Effect.onExit(program, (exit) =>
+      began && !recorded
+        ? ledgerCall('finishSweep', () =>
+            engine.ledger.finishSweep(
+              buildResult(state),
+              flight.kind,
+              Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause) ? 'cancelled' : 'failed',
+            ),
+          )
+        : Effect.void,
+    )
+  })
 }
 
 export class Engine {
-  private getKey: (envKey: string) => string | undefined
+  private constructor(
+    private readonly state: EngineState,
+    private readonly cache: Cache.Cache<Flight, SweepResult, EngineError, HttpClient.HttpClient>,
+  ) {}
 
-  constructor(
-    readonly adapters: ProviderAdapter[],
-    readonly ledger: Ledger,
+  static make(
+    adapters: readonly ProviderAdapter[],
+    ledger: Ledger,
     opts: EngineOptions = {},
-  ) {
-    this.getKey = opts.getKey ?? ((envKey) => process.env[envKey] || undefined)
+  ): Effect.Effect<Engine> {
+    const state: EngineState = {
+      adapters,
+      ledger,
+      getKey: opts.getKey ?? ((name) => process.env[name] || undefined),
+      flights: new Map(),
+      pacing: new Map(
+        adapters.map((adapter) => [adapter.name, { gate: Semaphore.makeUnsafe(1), nextAt: 0 }]),
+      ),
+    }
+    return Effect.map(
+      Cache.makeWith((flight: Flight) => executeSweep(state, flight), {
+        capacity: Infinity,
+        timeToLive: () => 0,
+        requireServicesAt: 'lookup',
+      }),
+      (cache) => new Engine(state, cache),
+    )
   }
 
-  async sweep(queryInput: UnifiedQuery, opts: SweepOptions = {}, kind: 'sweep' | 'doctor' = 'sweep'): Promise<SweepResult> {
-    const query = UnifiedQuery.parse(queryInput)
-    const started = Date.now()
-    const selected = this.selectAdapters(opts.providers)
-    if (query.googlePages !== undefined && !selected.some(adapter => ['google', 'anyapi'].includes(adapter.name))) {
-      throw new WidebandError('INVALID_ARGS', 'googlePages requires selecting the google or anyapi provider', ['use --providers google or --providers anyapi'], 2)
-    }
-    const providerStats: Record<string, ProviderCallStats> = {}
-    const runnable: { adapter: ProviderAdapter; key: string }[] = []
-
-    for (const adapter of selected) {
-      if (lacksCapability(adapter, query)) {
-        providerStats[adapter.name] = { status: 'skipped:capability', hits: 0, uniqueContributed: 0, latencyMs: 0 }
-        continue
-      }
-      const key = adapter.envKey ? this.getKey(adapter.envKey) : ''
-      if (adapter.envKey && !key) {
-        providerStats[adapter.name] = { status: 'skipped:nokey', hits: 0, uniqueContributed: 0, latencyMs: 0 }
-        continue
-      }
-      runnable.push({ adapter, key: key ?? '' })
-    }
-
-    if (runnable.length === 0) {
-      throw new WidebandError('NO_PROVIDERS', 'No providers can run this query', ['set provider API keys', 'run: wideband providers'], 3)
-    }
-
-    const included = this.applyBudget(runnable, opts.budget, providerStats)
-    if (included.length === 0) {
-      throw new WidebandError('BUDGET_TOO_LOW', 'Budget excludes all runnable providers', ['increase --budget'], 4)
-    }
-
-    const includedNames = included.map((x) => x.adapter.name).sort()
-    const cacheHash = sha256(stableStringify({ query, providers: includedNames, capture: Boolean(opts.capture) }))
-    const ttlSec = opts.ttlSec ?? Number(process.env.WIDEBAND_CACHE_TTL ?? 900)
-    if (!opts.fresh && kind === 'sweep') {
-      const cached = this.ledger.cacheGet(cacheHash, Number.isFinite(ttlSec) ? ttlSec : 900)
-      if (cached) {
-        const result: SweepResult = {
-          ...cached,
-          cached: true,
-          cost: { totalUSD: 0, byProvider: {} },
-        }
-        return this.applySession(result, opts.session)
-      }
-    }
-
-    const outcomes = await Promise.all(
-      included.map(({ adapter, key }) => this.callAdapter(adapter, key, query, opts.timeoutMs ?? adapter.timeoutMs ?? 10_000)),
-    )
-
-    const allHits: Hit[] = []
-    const byProviderCost: SweepResult['cost']['byProvider'] = {}
-    for (const outcome of outcomes) {
-      if (!outcome.ok) {
-        providerStats[outcome.provider] = {
-          status: providerStatus(outcome.error),
-          hits: 0,
-          uniqueContributed: 0,
-          latencyMs: outcome.latencyMs,
-          error: { code: outcome.error.code, message: outcome.error.message },
-        }
-        continue
-      }
-
-      const adapter = included.find((x) => x.adapter.name === outcome.provider)?.adapter
-      const freshnessStats = query.freshness && adapter ? emptyFreshnessStats(adapter, query.freshnessPolicy) : undefined
-      const hits: Hit[] = []
-      if (adapter) {
-        for (const hit of outcome.hits) {
-          const decision = decideFreshness(hit, adapter, query)
-          if (!decision.keep) {
-            if (freshnessStats && decision.dropped === 'stale') freshnessStats.droppedStale += 1
-            if (freshnessStats && decision.dropped === 'undated') freshnessStats.droppedUndated += 1
-            continue
+  sweep(
+    queryInput: unknown,
+    optsInput: SweepOptions = {},
+    kind: 'sweep' | 'doctor' = 'sweep',
+    onProvider?: Observer,
+  ): Effect.Effect<SweepResult, EngineError, HttpClient.HttpClient> {
+    return Effect.gen({ self: this }, function* () {
+      const { query, opts } = yield* Effect.try({
+        try: () => ({ query: parseQuery(queryInput), opts: parseSweepOptions(optsInput) }),
+        catch: (error) => new WidebandError('INVALID_ARGS', safeErrorMessage(error), [], 2),
+      })
+      const requested = opts.providers?.length
+        ? [...new Set(opts.providers.map((name) => name.toLowerCase()))]
+        : this.state.adapters.map((adapter) => adapter.name)
+      const unknown = requested.filter(
+        (name) => !this.state.adapters.some((adapter) => adapter.name === name),
+      )
+      if (unknown.length)
+        return yield* Effect.fail(
+          new WidebandError(
+            'UNKNOWN_PROVIDER',
+            `Unknown provider: ${unknown.join(', ')}`,
+            ['run: wideband providers'],
+            2,
+          ),
+        )
+      const selected = this.state.adapters.filter((adapter) => requested.includes(adapter.name))
+      if (
+        query.googlePages !== undefined &&
+        !selected.some((adapter) => ['google', 'anyapi'].includes(adapter.name))
+      )
+        return yield* Effect.fail(
+          new WidebandError(
+            'INVALID_ARGS',
+            'googlePages requires selecting the google or anyapi provider',
+            ['use --providers google or --providers anyapi'],
+            2,
+          ),
+        )
+      const providers = selected.map((adapter) => ({
+        adapter,
+        key: adapter.envKey ? (this.state.getKey(adapter.envKey) ?? '') : '',
+      }))
+      const key = sha256(
+        stableStringify({
+          query,
+          providers: providers
+            .map(({ adapter, key }) => ({
+              name: adapter.name,
+              credentials: sha256(key),
+              timeoutMs: opts.timeoutMs ?? adapter.timeoutMs ?? 10000,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+          capture: Boolean(opts.capture),
+          budget: opts.budget,
+          ttlSec: opts.ttlSec,
+          kind,
+        }),
+      )
+      const baseline = opts.session
+        ? yield* ledgerCall('seenIds', () => this.state.ledger.seenIds(opts.session ?? ''))
+        : new Set<string>()
+      const fresh = Boolean(opts.fresh || kind !== 'sweep')
+      const flight = !fresh
+        ? (this.state.flights.get(key) ?? {
+            key,
+            query,
+            opts,
+            kind,
+            providers,
+            observers: new Set<Observer>(),
+            history: [],
+            users: 0,
+          })
+        : {
+            key,
+            query,
+            opts,
+            kind,
+            providers,
+            observers: new Set<Observer>(),
+            history: [],
+            users: 0,
           }
-          const annotated = decision.confidence ? { ...hit, freshness: { confidence: decision.confidence } } : hit
-          hits.push(opts.capture ? annotated : stripRaw(annotated))
-          if (freshnessStats) {
-            freshnessStats.kept += 1
-            if (decision.classification === 'undated') freshnessStats.keptUndated += 1
-            if (decision.classification === 'stale') freshnessStats.keptStale += 1
+      if (!fresh) this.state.flights.set(key, flight)
+      flight.users += 1
+      const observer: Observer = (event) =>
+        onProvider?.({
+          ...event,
+          sources: event.sources.filter((source) => !baseline.has(source.id)),
+        })
+      if (onProvider) {
+        flight.observers.add(observer)
+        for (const event of flight.history) observer(clone(event))
+      }
+      const work = fresh ? executeSweep(this.state, flight) : Cache.get(this.cache, flight)
+      const projected = Effect.flatMap(work, (result) =>
+        Effect.gen({ self: this }, function* () {
+          const copied = clone(result)
+          if (!opts.session) return copied
+          const session = opts.session
+          const claimed = yield* ledgerCall('claimSources', () =>
+            this.state.ledger.claimSources(
+              session,
+              copied.sources.map((source) => source.id),
+            ),
+          )
+          const sources = copied.sources.filter((source) => claimed.has(source.id))
+          return {
+            ...copied,
+            sources,
+            stats: {
+              ...copied.stats,
+              uniqueSources: sources.length,
+              overlapPct: copied.stats.totalHits
+                ? roundScore(1 - sources.length / copied.stats.totalHits)
+                : 0,
+              suppressedBySession: copied.sources.length - sources.length,
+            },
           }
-          if (hits.length >= query.max) break
-        }
-      }
-      allHits.push(...hits)
-      const estimate = adapter ? estimateUSD(adapter.costModel) : { usd: 0, basis: 'metered' as CostBasis }
-      const cost =
-        typeof outcome.reportedUSD === 'number'
-          ? { usd: roundUSD(outcome.reportedUSD), basis: 'reported' as CostBasis }
-          : { usd: roundUSD(estimate.usd), basis: estimate.basis }
-      byProviderCost[outcome.provider] = cost
-      providerStats[outcome.provider] = {
-        status: 'ok',
-        hits: hits.length,
-        uniqueContributed: 0,
-        latencyMs: outcome.latencyMs,
-        ...(freshnessStats ? { freshness: freshnessStats } : {}),
-      }
-    }
-
-    const sources = mergeHits(allHits).map((source) => ({ ...source, score: roundScore(source.score) }))
-    for (const [provider, stats] of Object.entries(providerStats)) {
-      if (stats.status === 'ok') {
-        stats.uniqueContributed = sources.filter((source) => source.uniqueTo === provider).length
-      }
-    }
-
-    const totalHits = allHits.length
-    const totalUSD = roundUSD(Object.values(byProviderCost).reduce((sum, x) => sum + x.usd, 0))
-    const result: SweepResult = {
-      sweepId: `sw_${randomUUID().slice(0, 12)}`,
-      query,
-      sources,
-      stats: {
-        totalHits,
-        uniqueSources: sources.length,
-        overlapPct: totalHits === 0 ? 0 : roundScore(1 - sources.length / totalHits),
-        providers: providerStats,
-      },
-      cost: {
-        totalUSD,
-        byProvider: byProviderCost,
-      },
-      timing: { totalMs: Date.now() - started },
-    }
-
-    this.ledger.recordSweep(result, kind)
-    if (kind === 'sweep') this.ledger.cachePut(cacheHash, result)
-    return this.applySession(result, opts.session)
+        }),
+      ).pipe(
+        Effect.catchTag('WidebandError', (error) =>
+          Effect.fail(
+            new WidebandError(
+              error.code,
+              error.message,
+              error.suggestions,
+              error.exitCode,
+              error.result
+                ? {
+                    ...clone(error.result),
+                    sources: error.result.sources
+                      .filter((source) => !baseline.has(source.id))
+                      .map(clone),
+                  }
+                : undefined,
+            ),
+          ),
+        ),
+      )
+      return yield* Effect.ensuring(
+        projected,
+        Effect.sync(() => {
+          flight.observers.delete(observer)
+          flight.users -= 1
+          if (!flight.users && !fresh && this.state.flights.get(key) === flight)
+            this.state.flights.delete(key)
+        }),
+      )
+    })
   }
 
   providerInfo(): ProviderInfo[] {
-    const mtd = this.ledger.monthToDate()
-    return this.adapters.map((adapter) => {
-      const keyPresent = adapter.envKey ? Boolean(this.getKey(adapter.envKey)) : false
-      const month = mtd.providers[adapter.name] ?? { calls: 0, usd: 0 }
-      const quotaLimit = monthlyQuota(adapter.costModel)
+    const month = this.state.ledger.monthToDate()
+    return this.state.adapters.map((adapter) => {
+      const keyPresent = adapter.envKey ? Boolean(this.state.getKey(adapter.envKey)) : false
+      const usage = month.providers[adapter.name] ?? { attempts: 0, usd: 0, unknownAttempts: 0 }
+      const quota = monthlyQuota(adapter.costModel)
       return {
         name: adapter.name,
         configured: !adapter.envKey || keyPresent,
@@ -278,107 +708,9 @@ export class Engine {
         envKey: adapter.envKey,
         costModel: adapter.costModel,
         capabilities: adapter.capabilities,
-        month,
-        ...(quotaLimit === null ? {} : { quota: { limit: quotaLimit, used: month.calls } }),
+        month: usage,
+        ...(quota === null ? {} : { quota: { limit: quota, used: usage.attempts } }),
       }
     })
   }
-
-  private selectAdapters(names?: string[]): ProviderAdapter[] {
-    if (!names?.length) return this.adapters
-    const requested = [...new Set(names.map((name) => name.toLowerCase()))]
-    const known = new Set(this.adapters.map((adapter) => adapter.name))
-    const unknown = requested.filter((name) => !known.has(name))
-    if (unknown.length) {
-      throw new WidebandError('UNKNOWN_PROVIDER', `Unknown provider: ${unknown.join(', ')}`, ['run: wideband providers'], 2)
-    }
-    return this.adapters.filter((adapter) => requested.includes(adapter.name))
-  }
-
-  private applyBudget(
-    runnable: { adapter: ProviderAdapter; key: string }[],
-    budget: number | undefined,
-    providerStats: Record<string, ProviderCallStats>,
-  ) {
-    if (budget === undefined) return runnable
-    let spent = 0
-    const included: { adapter: ProviderAdapter; key: string }[] = []
-    const cheapestFirst = [...runnable].sort((a, b) => estimateUSD(a.adapter.costModel).usd - estimateUSD(b.adapter.costModel).usd)
-    for (const item of cheapestFirst) {
-      const estimate = estimateUSD(item.adapter.costModel).usd
-      if (spent + estimate <= budget) {
-        spent += estimate
-        included.push(item)
-      } else {
-        providerStats[item.adapter.name] = { status: 'skipped:budget', hits: 0, uniqueContributed: 0, latencyMs: 0 }
-      }
-    }
-    return included
-  }
-
-  private async callAdapter(adapter: ProviderAdapter, key: string, query: UnifiedQuery, timeoutMs: number): Promise<CallOutcome> {
-    const started = Date.now()
-    const deadline = started + timeoutMs
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const remainingMs = deadline - Date.now()
-      if (remainingMs <= 0) return timeoutOutcome(adapter.name, started)
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), remainingMs)
-      try {
-        const result = await adapter.search(query, { signal: controller.signal, key })
-        clearTimeout(timer)
-        return {
-          ok: true,
-          provider: adapter.name,
-          hits: result.hits,
-          ...(typeof result.reportedUSD === 'number' ? { reportedUSD: result.reportedUSD } : {}),
-          latencyMs: Date.now() - started,
-        }
-      } catch (error) {
-        clearTimeout(timer)
-        const adapterError = toAdapterError(error, controller.signal.aborted)
-        if (attempt === 0 && isRetryable(adapterError)) {
-          const retryDelayMs = 300 + Math.floor(Math.random() * 501)
-          const remainingAfterAttemptMs = deadline - Date.now()
-          if (remainingAfterAttemptMs <= 0) return timeoutOutcome(adapter.name, started)
-          await sleep(Math.min(retryDelayMs, remainingAfterAttemptMs))
-          continue
-        }
-        return { ok: false, provider: adapter.name, error: adapterError, latencyMs: Date.now() - started }
-      }
-    }
-    return {
-      ok: false,
-      provider: adapter.name,
-      error: new AdapterError('provider_error', 'Provider request failed'),
-      latencyMs: Date.now() - started,
-    }
-  }
-
-  private applySession(result: SweepResult, session?: string): SweepResult {
-    if (!session) return result
-    const sourceIds = result.sources.map((source) => source.id)
-    const seen = this.ledger.seenIds(session, sourceIds)
-    const sources = result.sources.filter((source) => !seen.has(source.id))
-    this.ledger.markSeen(
-      session,
-      sources.map((source) => source.id),
-    )
-    const suppressed = result.sources.length - sources.length
-    return {
-      ...result,
-      sources,
-      stats: {
-        ...result.stats,
-        uniqueSources: sources.length,
-        overlapPct: result.stats.totalHits === 0 ? 0 : roundScore(1 - sources.length / result.stats.totalHits),
-        suppressedBySession: suppressed,
-      },
-    }
-  }
-}
-
-function stripRaw(hit: Hit): Hit {
-  const { raw: _raw, ...rest } = hit
-  return rest
 }

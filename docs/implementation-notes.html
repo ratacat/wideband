@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Effect 4 implementation notes</title>
+<h1>Effect 4 implementation notes</h1>
+<h2>Resume Here</h2>
+<p>Completed implementation of every phase of docs/effect-4-plan.md in the single shared worktree on main, based on 1e55de1. The package is prepared as version 0.4.0. Changes remain in this worktree.</p>
+<p>Protected prior work: docs/effect-4-plan.md and the link added to docs/architecture.md. Both originated in this thread. Agent Mail has no registered project for this repository. No beads files were found.</p>
+<ul>
+<li>request_domain, Sol 6.1 xhigh: src/core/types.ts, errors.ts, cost.ts, engine.ts, ledger.ts.</li>
+<li>provider_transport, Sol 6.1 xhigh: src/adapters/*, src/google-search.mjs, src/google-search.d.mts.</li>
+<li>runtime_contract, Sol 6.1 xhigh: src/index.ts, src/cli/*, src/mcp/main.ts, tests/mcp.test.ts.</li>
+<li>Parent: dependencies/version, pure merge type adaptation, manual/E2E harnesses, in-repo caller migration, documentation and final integration.</li>
+</ul>
+<p>Final evidence: 29 source SDK/CLI scenarios, the same 29 through built entrypoints, 8 MCP tests with 36 assertions, typecheck, declaration build, and package inventory checks pass. The built MCP executable also passed handshake, tool listing, provider snapshots, and clean EOF. Source and built Google exports passed Node 22.16 subprocess and cross-process pacing fixtures. A real built Google search returned two sources in 1.769 seconds. No implementation item remains open.</p>
+<h2>Decisions</h2>
+<ul>
+<li>Use one batch Effect with provider completion events and per-flight replay/fanout. A cold stream would duplicate provider work across consumers.</li>
+<li>Use native Effect.retry and Schedule for the single retry. Schedule metadata supplies attempt ordinals. The active-only cache has infinite capacity and zero settled retention, preventing eviction of pending searches and duplicate paid executions under a burst.</li>
+<li>Keep ProviderAdapter, Sweep, Hit and Source. Distinguish each logical page/request from its transport attempts. RequestReceipt carries a typed result beside observed cost.</li>
+<li>Persist a pending attempt before dispatch, finalize it during cancellation cleanup, and retain page hits before a later page fails. Unknown charges remain conservative reserved estimates with explicit uncertainty.</li>
+<li>Engine.make returns an Effect. Ledger remains an internal synchronous SQLite resource owned by a scoped runtime layer. SQLite errors become typed LedgerError at that boundary.</li>
+<li>SDK factory remains synchronous. Searches and snapshots return Promises, stream returns an AsyncIterable, close returns an idempotent Promise. Remove public Engine/Ledger handles in the 0.4 release.</li>
+<li>Native Effect MCP was probed and rejected for this port. Its initialization behavior and extra capabilities added coupling. Retain the small custom boundary with strict schemas, real cancellation and awaited shutdown.</li>
+<li>Keep Google durable proxy reservations and process-group cleanup. Use a native Effect callback whose finalizer kills and awaits close; standalone Promise exports run the effect only at their boundary.</li>
+<li>Use finite Schema constraints, optionalKey and withDecodingDefaultKey for wire contracts. Effect value-level optional/default codecs otherwise emit nullable alternatives.</li>
+<li>Normalize explicit undefined object properties at SDK parse boundaries. Keep null, nonfinite limits, and undefined array entries invalid. Accept null for optional descriptive provider metadata while retaining strict envelopes, URLs, and numeric fields.</li>
+<li>Monthly usage is named attempts, while provider statistics use calls for settled provider operations. Legacy monthly attempt counts are approximate. No persisted table rename.</li>
+<li>AnyAPI reserves its published 900-microdollar fallback bound and records the reported charge. Tavily models its published 8000-microdollar credit rate, doubled for research. Exa and Parallel include result surcharges.</li>
+<li>Only effect 4.0.0 and Cheerio remain runtime dependencies. Zod and the unused platform-bun dependency were removed. The package version is 0.4.0, with Bun 1.4 as the tested minimum.</li>
+<li>Do not add configuration settings, unit tests, comments, root folders, or additional worktrees. Replace obsolete unit tests with SDK/CLI/MCP E2E coverage and manual harnesses.</li>
+</ul>
+<h2>Completion requirements</h2>
+<p>All adapters Effect-native; per-attempt reservations/accounting; partial-provider data; explicit total failure; schema decoding and generated wire schemas; scoped cancellation/shutdown; complete-only cache; shared requests with caller isolation; streaming final/batch parity; provider throttling; Google process and cross-process pacing; SDK/CLI/MCP contract migration; updated documentation; build/typecheck and actual end-to-end behavior.</p>
+<h2>Evidence and limitations</h2>
+<p>Live searches succeeded for Brave, Exa, Desearch, AnyAPI, Tavily, Parallel, and Google. Other configured providers returned quota, rate-limit, server, or timeout failures. The live Google ledger was independently read and contains one completed sweep, two sources, and one settled zero-fee attempt at /var/folders/bs/bp3d31vs523_m1fxr5_46r9c0000gn/T/wideband-google-final-bdcs96z9.sqlite.</p>
+<p>Storage fault checks prove a failed pending insert prevents dispatch, failed attempt finalization exposes observed cost while preserving a pending row, and failed summaries retain attempt charges. Forty concurrent legacy migration processes succeeded. The MI tool was run on old and new engine files; whole-file Visual Studio MI is zero for both, so no numerical maintainability improvement is claimed.</p>
+<h2>Progress Timeline</h2>
+<div id="timeline"></div>
+<script>
+const progressEvents = [
+  {ts:"2026-10-02",phase:"design",summary:"Three Sol 6.1 xhigh agents checked falsifiable predictions and agreed on request receipts, durable attempts, batch effects and completion events."},
+  {ts:"2026-10-02",phase:"dependencies",summary:"Installed exact effect 4.0.0 and platform-bun 4.0.0. Bun's seven-day age delay required a one-command age override for the requested fresh release. Lockfile changes inspected."},
+  {ts:"2026-10-02",phase:"implementation",summary:"Core agent published shared types/errors/cost. Adapter and runtime agents are implementing disjoint areas. Parent is building E2E coverage."},
+  {ts:"2026-10-02",phase:"integration",summary:"Fixed partial-only sweep handling, quota429 pacing, SDK undefined omission, nullable provider metadata, conservative price reservations, and concurrent SQLite initialization. All 27 SDK/CLI checks and 8 MCP tests passed."},
+  {ts:"2026-10-02",phase:"package",summary:"Built entrypoints passed all 27 scenarios. Package inventory has all exports and bins, with environment files and test fixtures excluded. Live Google succeeded. Native retry composition remains the final code refinement."},
+  {ts:"2026-10-02",phase:"final-refinements",summary:"Replaced manual retry iteration with Effect.retry and Schedule. Removed unused ledger wrappers. A 129-query probe exposed pending-cache eviction and duplicate billing; active-only infinite capacity corrected it without retaining settled entries."},
+  {ts:"2026-10-02",phase:"complete",summary:"Final typecheck, build, 29 source and 29 built SDK/CLI scenarios, 8 MCP tests, package inventory, and documentation links pass. Durable checks now include migration contention, failed attempt finalization, and active-cache pressure. All plan phases are implemented."}
+];
+document.getElementById('timeline').replaceChildren(...progressEvents.map(event => {const p=document.createElement('p');p.textContent=`${event.ts} ${event.phase}: ${event.summary}`;return p;}));
+</script>
+</html>

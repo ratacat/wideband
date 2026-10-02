@@ -1,6 +1,6 @@
 {
   "name": "wideband",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Fan-out search across agentic search providers, merged into deduplicated sources with provenance and cost telemetry",
   "keywords": [
     "ai search api",
@@ -43,14 +43,14 @@
     "dist"
   ],
   "engines": {
-    "bun": ">=1.1"
+    "bun": ">=1.4"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ratacat/wideband.git"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun testing/effect-e2e.ts && bun test tests/mcp.test.ts",
     "cli": "bun src/cli/main.ts",
     "typecheck": "bunx tsc --noEmit",
     "build": "rm -rf dist && bun build src/index.ts src/cli/main.ts src/mcp/main.ts src/google-search.mjs --outdir dist --target bun --packages external && bunx tsc -p tsconfig.build.json && cp src/google-search.d.mts dist/google-search.d.mts",
@@ -58,7 +58,7 @@
   },
   "dependencies": {
     "cheerio": "1.2.0",
-    "zod": "^4.0.0"
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest"

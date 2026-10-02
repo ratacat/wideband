@@ -3,17 +3,16 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { load } from 'cheerio';
-import { z } from 'zod';
+import { Effect, Schema } from 'effect';
 
 const PYTHON = `import json, sys
 from curl_cffi import requests
 data = json.load(sys.stdin)
 try:
     response = requests.get(
-        "https://www.google.com/wml/search",
-        params={"q": data["query"], "start": data["start"], "hl": "en", "gl": "us", "pws": "0", "sca_esv": "1"},
+        "https://www.google.com/search",
+        params={"q": data["query"], "start": data["start"], "hl": "en", "gl": "us", "pws": "0", "sca_esv": "1", "gbv": "1"},
         headers={"User-Agent": "NokiaN72/2.0617.1.0.3 Series60/2.8 Profile/MIDP-2.0 Configuration/CLDC-1.1"},
         proxy=data["proxy"], impersonate="chrome99_android", timeout=20, allow_redirects=False,
     )
@@ -22,10 +21,11 @@ except requests.exceptions.RequestException:
     print(json.dumps({"error": "transport"}))
 `;
 
-const Response = z.union([
-  z.object({ status: z.number().int(), html: z.string() }),
-  z.object({ error: z.literal('transport') }),
+const Response = Schema.Union([
+  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), html: Schema.String }),
+  Schema.Struct({ error: Schema.Literal('transport') }),
 ]);
+const decodeResponse = Schema.decodeUnknownSync(Response);
 
 export class SearchError extends Error {
   constructor(code, message) {
@@ -78,7 +78,7 @@ export function parseResults(html, start = 0) {
     const href = $(anchor).attr('href');
     if (!URL.canParse(href, 'https://www.google.com')) continue;
     const link = new URL(href, 'https://www.google.com');
-    if (link.hostname !== 'www.google.com' || !['/search', '/wml/search'].includes(link.pathname)) continue;
+    if (link.hostname !== 'www.google.com' || link.pathname !== '/search') continue;
     const next = Number(link.searchParams.get('start'));
     if (Number.isSafeInteger(next) && next > start && (nextStart === null || next < nextStart)) nextStart = next;
   }
@@ -92,10 +92,11 @@ export function parseResults(html, start = 0) {
   return { results, nextStart };
 }
 
-function fetchPage(input, signal) {
-  return new Promise((resolve, reject) => {
-    signal.throwIfAborted();
+function fetchPage(input) {
+  return Effect.callback((resume, signal) => {
     const child = spawn('uv', ['run', '--quiet', '--with', 'curl-cffi==0.16.3', 'python', '-c', PYTHON], { stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    let closed;
+    const done = new Promise(resolve => { closed = resolve; });
     const kill = () => {
       if (child.pid) {
         try {
@@ -113,19 +114,20 @@ function fetchPage(input, signal) {
     });
     child.stderr.resume();
     child.stdin.on('error', () => {});
-    child.once('error', () => {
-      signal.removeEventListener('abort', kill);
-      if (signal.aborted) return reject(signal.reason);
-      reject(new SearchError('runtime', 'Could not start uv. Install uv and Python 3.10 or newer.'));
-    });
+    let spawnFailed = false;
+    child.once('error', () => { spawnFailed = true; });
     child.once('close', code => {
       signal.removeEventListener('abort', kill);
-      if (signal.aborted) return reject(signal.reason);
-      if (code !== 0) return reject(new SearchError('runtime', 'The Python transport failed. Check uv and curl_cffi installation.'));
-      try { resolve(Response.parse(JSON.parse(output))); }
-      catch { reject(new SearchError('runtime', 'The Python transport returned invalid output.')); }
+      closed();
+      if (spawnFailed) return resume(Effect.fail(new SearchError('runtime', 'Could not start uv. Install uv and Python 3.10 or newer.')));
+      if (code !== 0) return resume(Effect.fail(new SearchError('runtime', 'The Python transport failed. Check uv and curl_cffi installation.')));
+      resume(Effect.try({
+        try: () => decodeResponse(JSON.parse(output)),
+        catch: () => new SearchError('invalid_response', 'The Python transport returned invalid output.'),
+      }));
     });
     child.stdin.end(JSON.stringify(input));
+    return Effect.promise(() => { kill(); return done; });
   });
 }
 
@@ -165,46 +167,69 @@ function proxyUrls() {
   });
 }
 
-export function createSearch() {
-  return async function search(query, start = 0, options = {}) {
-    if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
-    if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
-    const deadline = AbortSignal.timeout(45_000);
-    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
-    signal.throwIfAborted();
-    const pool = proxyUrls().map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
-    if (!pool.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
-    const failures = [];
-    const attempted = new Set();
-    for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
-      signal.throwIfAborted();
-      const available = pool.filter(proxy => !attempted.has(proxy.id));
-      let lease = await reserve(available);
-      while (lease.id === null) {
-        await delay(Math.max(0, lease.readyAt - Date.now()), undefined, { signal });
-        signal.throwIfAborted();
-        lease = await reserve(available);
-      }
-      const proxy = pool.find(proxy => proxy.id === lease.id);
-      if (!proxy) throw new SearchError('inventory', 'Proxy reservation does not match inventory.');
-      attempted.add(proxy.id);
-      await delay(Math.max(0, lease.readyAt - Date.now()), undefined, { signal });
-      const page = await fetchPage({ query, start, proxy: proxy.url }, signal);
-      try {
-        if (page.error) throw new SearchError('transport', 'Proxy connection failed.');
-        if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
-        return { query, start, ...parseResults(page.html, start) };
-      } catch (error) {
-        if (!(error instanceof SearchError)) throw error;
-        if (error.code === 'unrecognized') throw error;
-        const db = await proxyStore();
-        try { db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + 900_000, proxy.id); }
-        finally { db.close(); }
+function proxyOperation(operation) {
+  return Effect.tryPromise({
+    try: operation,
+    catch: error => error instanceof SearchError ? error : new SearchError('inventory', 'Google proxy reservations failed.'),
+  });
+}
+
+export function createSearchEffect() {
+  return function searchEffect(query, start = 0) {
+    return Effect.gen(function* () {
+      const pool = yield* Effect.try({
+        try: () => {
+          if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
+          if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
+          const proxies = proxyUrls().map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
+          if (!proxies.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
+          return proxies;
+        },
+        catch: error => error,
+      });
+      const failures = [];
+      const attempted = new Set();
+      for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
+        const available = pool.filter(proxy => !attempted.has(proxy.id));
+        let lease = yield* proxyOperation(() => reserve(available));
+        while (lease.id === null) {
+          yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
+          lease = yield* proxyOperation(() => reserve(available));
+        }
+        const proxy = pool.find(proxy => proxy.id === lease.id);
+        if (!proxy) return yield* Effect.fail(new SearchError('inventory', 'Proxy reservation does not match inventory.'));
+        attempted.add(proxy.id);
+        yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
+        const page = yield* fetchPage({ query, start, proxy: proxy.url });
+        const parsed = yield* Effect.result(Effect.try({
+          try: () => {
+            if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
+            if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
+            return { query, start, ...parseResults(page.html, start) };
+          },
+          catch: error => error,
+        }));
+        if (parsed._tag === 'Success') return parsed.success;
+        const error = parsed.failure;
+        if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
+        yield* proxyOperation(async () => {
+          const db = await proxyStore();
+          try { db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + 900_000, proxy.id); }
+          finally { db.close(); }
+        });
         failures.push(error.code);
       }
-    }
-    throw new SearchError('exhausted', `Search failed after ${failures.length} proxy attempts: ${failures.join(', ')}.`);
+      return yield* Effect.fail(new SearchError('exhausted', `Search failed after ${failures.length} proxy attempts: ${failures.join(', ')}.`));
+    }).pipe(Effect.timeoutOrElse({
+      duration: 45_000,
+      orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
+    }));
   };
+}
+
+export function createSearch() {
+  const run = createSearchEffect();
+  return (query, start = 0, options = {}) => Effect.runPromise(run(query, start), { signal: options.signal });
 }
 
 async function proxyStore() {
@@ -238,19 +263,22 @@ async function reserve(pool) {
   }
 }
 
+export const searchEffect = createSearchEffect();
 export const search = createSearch();
 
-export async function search100(query) {
-  const results = new Map();
-  let nextStart = 0;
-  let pages = 0;
-  while (pages < 10 && nextStart !== null && results.size < 100) {
-    const page = await search(query, nextStart);
-    pages++;
-    for (const result of page.results) {
-      if (!results.has(result.url)) results.set(result.url, result);
+export function search100(query) {
+  return Effect.runPromise(Effect.gen(function* () {
+    const results = new Map();
+    let nextStart = 0;
+    let pages = 0;
+    while (pages < 10 && nextStart !== null && results.size < 100) {
+      const page = yield* searchEffect(query, nextStart);
+      pages++;
+      for (const result of page.results) {
+        if (!results.has(result.url)) results.set(result.url, result);
+      }
+      nextStart = page.nextStart;
     }
-    nextStart = page.nextStart;
-  }
-  return { query, results: [...results.values()].slice(0, 100), pages, nextStart };
+    return { query, results: [...results.values()].slice(0, 100), pages, nextStart };
+  }));
 }

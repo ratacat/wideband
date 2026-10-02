@@ -469,7 +469,7 @@ async function main() {
       }
     }
   } finally {
-    wb.close()
+    await wb.close()
   }
 
   for (const row of rows) {

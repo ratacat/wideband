@@ -1,18 +1,17 @@
+import { Effect, Schema } from 'effect'
 import type { Hit, ProviderAdapter } from '../core/types'
 import { dateOnly } from '../core/freshness'
-import { requestJSON, stripTags } from './http'
+import { requestJSON, HttpUrl, stripTags } from './http'
 
-type BraveResult = {
-  title?: string
-  url?: string
-  description?: string
-  page_age?: string
-}
-
-type BraveResponse = {
-  web?: { results?: BraveResult[] }
-  results?: BraveResult[]
-}
+const BraveResult = Schema.StructWithRest(Schema.Struct({
+  title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  url: HttpUrl,
+  description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  page_age: Schema.optionalKey(Schema.NullOr(Schema.String)),
+}), [Schema.Record(Schema.String, Schema.Unknown)])
+type BraveResult = typeof BraveResult.Type
+const BraveWebResponse = Schema.Struct({ web: Schema.Struct({ results: Schema.Array(BraveResult) }) })
+const BraveNewsResponse = Schema.Struct({ results: Schema.Array(BraveResult) })
 
 function freshnessParam(after?: string, before?: string): string | undefined {
   if (!after && !before) return undefined
@@ -30,40 +29,43 @@ export const brave: ProviderAdapter = {
     maxPerRequest: 20,
   },
   costModel: { kind: 'free', monthlyQuota: 2000 },
-  async search(q, ctx) {
-    const max = Math.min(q.max, 20)
-    const endpoint =
-      q.mediaType === 'news'
-        ? 'https://api.search.brave.com/res/v1/news/search'
-        : 'https://api.search.brave.com/res/v1/web/search'
-    const url = new URL(endpoint)
-    url.searchParams.set('q', q.q)
-    url.searchParams.set('count', String(max))
-    const freshness = freshnessParam(q.freshness?.after, q.freshness?.before)
-    if (freshness) url.searchParams.set('freshness', freshness)
+  search(q, ctx) {
+    return Effect.gen(function* () {
+      const max = Math.min(q.max, 20)
+      const endpoint =
+        q.mediaType === 'news'
+          ? 'https://api.search.brave.com/res/v1/news/search'
+          : 'https://api.search.brave.com/res/v1/web/search'
+      const url = new URL(endpoint)
+      url.searchParams.set('q', q.q)
+      url.searchParams.set('count', String(max))
+      const freshness = freshnessParam(q.freshness?.after, q.freshness?.before)
+      if (freshness) url.searchParams.set('freshness', freshness)
 
-    const json = await requestJSON<BraveResponse>(url.toString(), {
-      signal: ctx.signal,
-      headers: {
-        accept: 'application/json',
-        'X-Subscription-Token': ctx.key,
-      },
+      const json = yield* ctx.request({
+        requestId: 'search',
+        run: requestJSON<typeof BraveWebResponse.Type | typeof BraveNewsResponse.Type>(url.toString(), {
+          headers: {
+            accept: 'application/json',
+            'X-Subscription-Token': ctx.key,
+          },
+        }, q.mediaType === 'news' ? BraveNewsResponse : BraveWebResponse, ctx.key),
+      })
+
+      const rows = 'results' in json ? json.results : json.web.results
+      const hits: Hit[] = rows
+        .slice(0, max)
+        .map((r, i) => ({
+          provider: 'brave',
+          rank: i + 1,
+          url: r.url,
+          ...(r.title ? { title: r.title } : {}),
+          ...(r.description ? { snippet: stripTags(r.description) } : {}),
+          ...(r.page_age ? { publishedAt: r.page_age } : {}),
+          mediaType: q.mediaType,
+          raw: r,
+        }))
+      yield* ctx.addHits(hits)
     })
-
-    const rows = q.mediaType === 'news' ? (json.results ?? []) : (json.web?.results ?? [])
-    const hits: Hit[] = rows
-      .filter((r): r is BraveResult & { url: string } => typeof r.url === 'string' && r.url.length > 0)
-      .slice(0, max)
-      .map((r, i) => ({
-        provider: 'brave',
-        rank: i + 1,
-        url: r.url,
-        ...(r.title ? { title: r.title } : {}),
-        ...(r.description ? { snippet: stripTags(r.description) } : {}),
-        ...(r.page_age ? { publishedAt: r.page_age } : {}),
-        mediaType: q.mediaType,
-        raw: r,
-      }))
-    return { hits }
   },
 }

@@ -1,6 +1,3 @@
-// Breadth test: one fan-out sweep per query; per-provider breadth derived from
-// Source.provenance (provider p's result set = sources whose provenance includes p).
-// Fair by construction: same query, same max, same moment for every provider.
 import { wideband } from '../../src/index'
 
 const QUERIES = [
@@ -28,7 +25,7 @@ for (const q of QUERIES) {
     union: r.stats.uniqueSources,
     totalHits: r.stats.totalHits,
     overlapPct: r.stats.overlapPct,
-    found: byProvider, // distinct sources each provider found
+    found: byProvider,
     providers: Object.fromEntries(
       Object.entries(r.stats.providers).map(([p, st]) => [
         p,
@@ -41,6 +38,6 @@ for (const q of QUERIES) {
   console.error(`done: ${q} (union ${r.stats.uniqueSources}, $${r.cost.totalUSD.toFixed(4)})`)
 }
 
-wb.close()
+await wb.close()
 await Bun.write(new URL('results.json', import.meta.url).pathname, JSON.stringify(out, null, 1))
 console.error('wrote results.json')

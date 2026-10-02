@@ -1,11 +1,9 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
-import { z } from 'zod'
-import { ADAPTERS } from '../adapters/registry'
-import { Engine } from '../core/engine'
-import { Ledger } from '../core/ledger'
-import { FreshnessPolicy, Source, SweepResult, UnifiedQuery, type Source as SourceType, type SweepOptions } from '../core/types'
-import { WidebandError } from '../core/errors'
+import { Schema } from 'effect'
+import { wideband } from '../index'
+import { FreshnessPolicy, Source, SweepResult, UnifiedQuery, parseQuery, type Source as SourceType, type SweepOptions } from '../core/types'
+import { safeErrorMessage, WidebandError } from '../core/errors'
 import { loadPackageEnv } from './env'
 
 loadPackageEnv()
@@ -19,16 +17,23 @@ const HELP = `wideband — fan-out search across providers, merged unique source
   doctor          live-validate keys
   schema [type]   JSON Schema for outputs
 flags:
-  --google-pages N fetch up to 1–10 Google pages (default 1; Google is included by default)
+  --google-pages N fetch up to 1–10 Google or AnyAPI pages (default 1)
   --max N         results per provider, 1–100; defaults to 10 × Google pages when specified
+  --budget USD    limit estimated request costs, including pages and retries
+  --timeout MS    provider deadline, including retries and waits
   --hours N       filter to content published within the last N hours
   --after VALUE   filter to content after an ISO timestamp or YYYY-MM-DD
   --before VALUE  filter to content before an ISO timestamp or YYYY-MM-DD
   --freshness MODE strict, balanced, or recall; default balanced
-  --fresh         bypass the TTL cache
+  --fresh         bypass cached and shared searches
+  --stream        print provider snapshots and the final result as NDJSON
 exit: 0 ok · 1 no results · 2 bad args · 3 config · 4 budget · 5 all failed`
 
-const FIELD_NAMES = Source.keyof().options as (keyof SourceType)[]
+function isSourceField(field: string): field is keyof SourceType {
+  return Object.hasOwn(Source.fields, field)
+}
+
+const FIELD_NAMES = Object.keys(Source.fields).filter(isSourceField)
 const DEFAULT_FIELDS: (keyof SourceType)[] = ['id', 'url', 'title', 'snippet', 'publishedAt', 'providers', 'freshness', 'score']
 
 const options = {
@@ -39,6 +44,7 @@ const options = {
   timeout: { type: 'string' },
   session: { type: 'string' },
   fresh: { type: 'boolean' },
+  stream: { type: 'boolean' },
   ttl: { type: 'string' },
   fields: { type: 'string' },
   full: { type: 'boolean' },
@@ -63,6 +69,7 @@ type CliValues = {
   timeout?: string
   session?: string
   fresh?: boolean
+  stream?: boolean
   ttl?: string
   fields?: string
   full?: boolean
@@ -80,7 +87,6 @@ type CliValues = {
 }
 
 type Parsed = { values: CliValues; positionals: string[] }
-type DoctorCheck = { provider: string; status: string; latencyMs?: number; error?: { code: string; message: string } }
 
 function wantsJSON(values: Parsed['values']) {
   if (values.json) return true
@@ -100,15 +106,10 @@ function fail(error: unknown): never {
   const wb =
     error instanceof WidebandError
       ? error
-      : error instanceof z.ZodError
-        ? new WidebandError(
-            'INVALID_ARGS',
-            error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; '),
-            ['run: wideband --help'],
-            2,
-          )
-      : new WidebandError('INTERNAL', error instanceof Error ? error.message : 'Internal error', [], 1)
-  console.error(JSON.stringify({ error: { code: wb.code, message: wb.message, suggestions: wb.suggestions } }, null, 2))
+      : Schema.isSchemaError(error)
+        ? new WidebandError('INVALID_ARGS', safeErrorMessage(error), ['run: wideband --help'], 2)
+        : new WidebandError('INTERNAL', safeErrorMessage(error), [], 1)
+  console.error(JSON.stringify({ error: { code: wb.code, message: wb.message, suggestions: wb.suggestions }, ...(wb.result ? { result: wb.result } : {}) }, null, 2))
   process.exit(wb.exitCode)
 }
 
@@ -170,17 +171,17 @@ function buildFreshness(values: Parsed['values']) {
 
 function buildFreshnessPolicy(values: Parsed['values']) {
   if (values.freshness === undefined) return undefined
-  const parsed = FreshnessPolicy.safeParse(values.freshness)
-  if (!parsed.success) invalid('--freshness must be one of: strict, balanced, recall')
-  return parsed.data
+  const parsed = Schema.decodeUnknownResult(FreshnessPolicy)(values.freshness)
+  if (parsed._tag === 'Failure') invalid('--freshness must be one of: strict, balanced, recall')
+  return parsed.success
 }
 
 function projectionFields(values: Parsed['values']): (keyof SourceType)[] {
   if (values.full) return FIELD_NAMES
   const fields = values.fields ? splitList(values.fields) : DEFAULT_FIELDS
-  const invalidFields = (fields ?? []).filter((field) => !FIELD_NAMES.includes(field as keyof SourceType))
+  const invalidFields = (fields ?? []).filter((field) => !isSourceField(field))
   if (invalidFields.length) invalid(`Unknown source field: ${invalidFields.join(', ')}`)
-  return fields as (keyof SourceType)[]
+  return (fields ?? []).filter(isSourceField)
 }
 
 function truncateSnippet(value: unknown, full: boolean) {
@@ -221,7 +222,7 @@ function prettySearch(result: SweepResult) {
   return `${lines.length ? lines.join('\n') : 'no results'}${prettyProviderStats(result)}`
 }
 
-function prettyProviders(providers: ReturnType<Engine['providerInfo']>) {
+function prettyProviders(providers: Awaited<ReturnType<ReturnType<typeof wideband>['providers']>>) {
   return providers
     .map((p) => {
       const quota = p.quota ? ` quota ${p.quota.used}/${p.quota.limit}` : ''
@@ -233,7 +234,7 @@ function prettyProviders(providers: ReturnType<Engine['providerInfo']>) {
 async function run() {
   let parsed: Parsed
   try {
-    parsed = parseArgs({ options, allowPositionals: true, strict: true }) as Parsed
+    parsed = parseArgs({ options, allowPositionals: true, strict: true })
   } catch (error) {
     throw new WidebandError('INVALID_ARGS', error instanceof Error ? error.message : 'Invalid arguments', ['run: wideband --help'], 2)
   }
@@ -252,14 +253,18 @@ async function run() {
   if (command === 'schema') {
     const name = positionals[1] ?? 'SweepResult'
     const schemas = { SweepResult, Source, UnifiedQuery }
-    const schema = schemas[name as keyof typeof schemas]
-    if (!schema) invalid(`Unknown schema: ${name}`)
-    console.log(JSON.stringify((z as unknown as { toJSONSchema: (schema: unknown) => unknown }).toJSONSchema(schema), null, 2))
+    const parsedName = Schema.decodeUnknownResult(Schema.Literals(['SweepResult', 'Source', 'UnifiedQuery']))(name)
+    if (parsedName._tag === 'Failure') invalid(`Unknown schema: ${name}`)
+    const document = Schema.toJsonSchemaDocument(schemas[parsedName.success])
+    console.log(JSON.stringify({ ...document.schema, ...(Object.keys(document.definitions).length ? { $defs: document.definitions } : {}) }, null, 2))
     return 0
   }
 
-  const ledger = new Ledger()
-  const engine = new Engine(ADAPTERS, ledger)
+  const wb = wideband()
+  const controller = new AbortController()
+  const interrupt = () => controller.abort()
+  process.once('SIGINT', interrupt)
+  process.once('SIGTERM', interrupt)
   try {
     if (command === 'scan' || command === 'research') {
       const q = positionals.slice(1).join(' ').trim()
@@ -268,7 +273,7 @@ async function run() {
       const max = intFlag(values.max, '--max', { min: 1, max: 100 }) ?? (googlePages === undefined ? undefined : googlePages * 10)
       const freshness = buildFreshness(values)
       const freshnessPolicy = buildFreshnessPolicy(values)
-      const query = UnifiedQuery.parse({
+      const query = parseQuery({
         q,
         mode: command,
         ...(googlePages !== undefined ? { googlePages } : {}),
@@ -277,23 +282,41 @@ async function run() {
         ...(freshness ? { freshness } : {}),
         ...(freshnessPolicy ? { freshnessPolicy } : {}),
       })
-      const result = await engine.sweep(query, buildSweepOptions(values))
+      const sweepOptions = { ...buildSweepOptions(values), signal: controller.signal }
+      const fields = projectionFields(values)
+      let result: SweepResult
+      let failed = false
+      try {
+        if (values.stream) {
+          let final: SweepResult | undefined
+          for await (const event of wb.stream(query, sweepOptions)) {
+            console.log(JSON.stringify(event.kind === 'result' ? { ...event, result: projectSearchResult(event.result, values) } : { ...event, sources: event.sources.map(source => projectSource(source, fields, Boolean(values.full))) }))
+            if (event.kind === 'result') final = event.result
+          }
+          if (!final) throw new WidebandError('INTERNAL', 'Stream ended without a result')
+          result = final
+        } else {
+          result = await wb.sweep(query, sweepOptions)
+        }
+      } catch (error) {
+        if (!(error instanceof WidebandError) || error.code !== 'ALL_PROVIDERS_FAILED' || !error.result) throw error
+        result = error.result
+        failed = true
+        if (values.stream) console.log(JSON.stringify({ kind: 'result', result: projectSearchResult(result, values) }))
+      }
       const output = projectSearchResult(result, values)
-      writeOutput(output, values, () => prettySearch(result))
-      if (result.sources.length > 0) return 0
-      const nonSkipped = Object.values(result.stats.providers).filter((p) => !p.status.startsWith('skipped:'))
-      if (nonSkipped.length > 0 && nonSkipped.every((p) => p.status === 'error' || p.status === 'timeout')) return 5
-      return 1
+      if (!values.stream) writeOutput(output, values, () => prettySearch(result))
+      return failed ? 5 : result.sources.length > 0 ? 0 : 1
     }
 
     if (command === 'providers') {
-      const providers = engine.providerInfo()
+      const providers = await wb.providers()
       writeOutput(providers, values, () => prettyProviders(providers))
       return 0
     }
 
     if (command === 'stats') {
-      const stats = ledger.stats(intFlag(values.days, '--days', { min: 1 }) ?? 30)
+      const stats = await wb.stats(intFlag(values.days, '--days', { min: 1 }) ?? 30)
       writeOutput(stats, values, () =>
         Object.entries(stats)
           .map(([name, s]) => `${name}: calls ${s.calls}, unique ${s.uniqueContributed}, $/unique ${s.costPerUniqueSource ?? 'n/a'}`)
@@ -303,52 +326,15 @@ async function run() {
     }
 
     if (command === 'costs') {
-      const costs = ledger.monthToDate()
+      const costs = await wb.costs()
       writeOutput(costs, values, () =>
-        [`total: $${costs.totalUSD}`, ...Object.entries(costs.providers).map(([name, c]) => `${name}: ${c.calls} calls, $${c.usd}`)].join('\n'),
+        [`total: $${costs.totalUSD}`, ...Object.entries(costs.providers).map(([name, c]) => `${name}: ${c.attempts} attempts, $${c.usd}`)].join('\n'),
       )
       return 0
     }
 
     if (command === 'doctor') {
-      const providers = engine.providerInfo()
-      const missingKeys = providers.flatMap((p) => p.envKey && !p.keyPresent ? [p.envKey] : [])
-      const checks: DoctorCheck[] = await Promise.all(
-        providers
-          .filter((p) => p.configured)
-          .map(async (provider) => {
-            try {
-              const result = await engine.sweep(
-                UnifiedQuery.parse({ q: 'wideband connectivity check', max: 1 }),
-                { providers: [provider.name], fresh: true, timeoutMs: 8000 },
-                'doctor',
-              )
-              const stats = result.stats.providers[provider.name]
-              if (!stats) {
-                return {
-                  provider: provider.name,
-                  status: 'error',
-                  error: { code: 'missing_stats', message: 'Provider returned no stats' },
-                }
-              }
-              return {
-                provider: provider.name,
-                status: stats.status,
-                latencyMs: stats.latencyMs,
-                ...(stats.error ? { error: stats.error } : {}),
-              }
-            } catch (error) {
-              return {
-                provider: provider.name,
-                status: 'error',
-                error: {
-                  code: error instanceof WidebandError ? error.code : 'doctor_error',
-                  message: error instanceof Error ? error.message : 'Provider doctor check failed',
-                },
-              }
-            }
-          }),
-      )
+      const { checks, missingKeys } = await wb.doctor({ signal: controller.signal })
       const output = { checks, missingKeys }
       writeOutput(output, values, () =>
         [
@@ -361,7 +347,9 @@ async function run() {
 
     invalid(`Unknown command: ${command}`)
   } finally {
-    ledger.close()
+    process.removeListener('SIGINT', interrupt)
+    process.removeListener('SIGTERM', interrupt)
+    await wb.close()
   }
 }
 
