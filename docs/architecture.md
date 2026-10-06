@@ -92,7 +92,7 @@ The custom MCP boundary generates shared tool schemas, negotiates protocols, han
 
 Google uses `uv` and pinned `curl_cffi` in a detached process group. Its Effect callback finalizer kills the group and waits for close. The standalone module runs on Node 22.16 or newer without Bun-specific imports.
 
-Proxy reservations stay in `~/.wideband/google-proxies.sqlite`. Immediate transactions coordinate separate processes, with six seconds between uses and a fifteen-minute failure penalty. The store contains hashes and timestamps. Each page retains its 45-second deadline and at most three proxy attempts.
+Proxy reservations stay in `~/.wideband/google-proxies.sqlite`. Immediate transactions coordinate separate processes, with three minutes between uses, a two-hour penalty after a block, and a fifteen-minute penalty after another failure. A page waits at most five seconds for a free proxy. The store contains hashes and timestamps. Each page retains its 45-second deadline and at most three proxy attempts.
 
 ## Verification
 

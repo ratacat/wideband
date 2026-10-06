@@ -16,13 +16,19 @@ try:
         headers={"User-Agent": "NokiaN72/2.0617.1.0.3 Series60/2.8 Profile/MIDP-2.0 Configuration/CLDC-1.1"},
         proxy=data["proxy"], impersonate="chrome99_android", timeout=20, allow_redirects=False,
     )
-    print(json.dumps({"status": response.status_code, "html": response.text}))
+    print(json.dumps({"status": response.status_code, "location": response.headers.get("location", ""), "html": response.text}))
 except requests.exceptions.RequestException:
     print(json.dumps({"error": "transport"}))
 `;
 
+const PROXY_SPACING_MS = 180_000;
+const PROXY_WAIT_MS = 5_000;
+const FAILURE_REST_MS = 900_000;
+const BLOCK_REST_MS = 7_200_000;
+const BLOCKS = new Set(['blocked', 'challenge']);
+
 const Response = Schema.Union([
-  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), html: Schema.String }),
+  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), location: Schema.String, html: Schema.String }),
   Schema.Struct({ error: Schema.Literal('transport') }),
 ]);
 const decodeResponse = Schema.decodeUnknownSync(Response);
@@ -191,10 +197,15 @@ export function createSearchEffect() {
       const attempted = new Set();
       for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
         const available = pool.filter(proxy => !attempted.has(proxy.id));
+        const deadline = Date.now() + PROXY_WAIT_MS;
         let lease = yield* proxyOperation(() => reserve(available));
-        while (lease.id === null) {
+        while (lease.id === null && lease.readyAt <= deadline) {
           yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
           lease = yield* proxyOperation(() => reserve(available));
+        }
+        if (lease.id === null) {
+          if (!failures.length) return yield* Effect.fail(new SearchError('unavailable', 'No Google proxy is free; every proxy is resting or blocked.'));
+          break;
         }
         const proxy = pool.find(proxy => proxy.id === lease.id);
         if (!proxy) return yield* Effect.fail(new SearchError('inventory', 'Proxy reservation does not match inventory.'));
@@ -204,6 +215,7 @@ export function createSearchEffect() {
         const parsed = yield* Effect.result(Effect.try({
           try: () => {
             if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
+            if (page.status === 429 || page.location.includes('/sorry')) throw new SearchError('blocked', `Google blocked this proxy with HTTP ${page.status}.`);
             if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
             return { query, start, ...parseResults(page.html, start) };
           },
@@ -214,7 +226,7 @@ export function createSearchEffect() {
         if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
         yield* proxyOperation(async () => {
           const db = await proxyStore();
-          try { db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + 900_000, proxy.id); }
+          try { db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + (BLOCKS.has(error.code) ? BLOCK_REST_MS : FAILURE_REST_MS), proxy.id); }
           finally { db.close(); }
         });
         failures.push(error.code);
@@ -255,7 +267,7 @@ async function reserve(pool) {
       db.exec('COMMIT');
       return { id: null, readyAt };
     }
-    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(readyAt + 6_000, row.id);
+    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(readyAt + PROXY_SPACING_MS, row.id);
     db.exec('COMMIT');
     return { id: row.id, readyAt };
   } finally {
