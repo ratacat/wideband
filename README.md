@@ -314,8 +314,8 @@ The scheduler coordinates CLI processes and SDK clients under the same home dire
 - The same connection has at least three minutes between reservations. On `/search`, Google blocks an exit IP after far fewer requests than it allowed on the retired `/wml/search`.
 - A block puts that connection on a two-hour cooldown: a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, or a JavaScript challenge. Transport failures and other non-200 responses put it on a fifteen-minute cooldown.
 - A page tries at most three distinct available connections. Unrecognized markup stops the search so a parser change cannot be hidden by repeated proxy attempts.
-- A page waits at most five seconds for a free connection. When none is free, Google fails at once as `unavailable`, so the other providers' results arrive without the wait.
-- Each page has a 45-second deadline. Each network attempt has a 20-second timeout.
+- A page waits up to 45 seconds for a free connection. When no connection becomes free within 45 seconds, Google fails at once as `unavailable` instead of waiting for the page deadline.
+- Each page has a 45-second deadline, including proxy waits. Each network attempt has a 20-second timeout.
 - Google has a 120-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
 
 These timings are wideband's policy, not a Google-approved request rate. The scheduler database contains hashes and timestamps, not credentials. State is shared on the same machine and home directory; separate machines do not coordinate their proxy usage automatically.

@@ -22,7 +22,7 @@ except requests.exceptions.RequestException:
 `;
 
 const PROXY_SPACING_MS = 180_000;
-const PROXY_WAIT_MS = 5_000;
+const PROXY_WAIT_MS = 45_000;
 const FAILURE_REST_MS = 900_000;
 const BLOCK_REST_MS = 7_200_000;
 const BLOCKS = new Set(['blocked', 'challenge']);
