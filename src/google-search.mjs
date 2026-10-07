@@ -189,7 +189,7 @@ export function createSearchEffect() {
         try: () => {
           if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
           if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
-          const proxies = proxyUrls().map(url => ({ url, id: createHash('sha256').update(url).digest('hex') }));
+          const proxies = proxyUrls().map(url => ({ url, host: new URL(url).host, id: createHash('sha256').update(url).digest('hex') }));
           if (!proxies.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
           return proxies;
         },
@@ -222,14 +222,17 @@ export function createSearchEffect() {
           },
           catch: error => error,
         }));
-        if (parsed._tag === 'Success') return parsed.success;
-        const error = parsed.failure;
-        if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
+        const error = parsed._tag === 'Failure' ? parsed.failure : undefined;
+        const rest = error instanceof SearchError && error.code !== 'unrecognized';
         yield* proxyOperation(async () => {
           const db = await proxyStore();
-          try { db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + (BLOCKS.has(error.code) ? BLOCK_REST_MS : FAILURE_REST_MS), proxy.id); }
-          finally { db.close(); }
+          try {
+            db.prepare('INSERT INTO tries (proxy, at, outcome) VALUES (?, ?, ?)').run(proxy.host, Date.now(), error ? error.code ?? 'error' : 'ok');
+            if (rest) db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + (BLOCKS.has(error.code) ? BLOCK_REST_MS : FAILURE_REST_MS), proxy.id);
+          } finally { db.close(); }
         });
+        if (!error) return parsed.success;
+        if (!rest) return yield* Effect.fail(error);
         failures.push(error.code);
       }
       return yield* Effect.fail(new SearchError('exhausted', `Every Google proxy try failed: ${failures.join(', ')}.`, failures));
@@ -250,7 +253,7 @@ async function proxyStore() {
   const directory = join(homedir(), '.wideband');
   mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(join(directory, 'google-proxies.sqlite'));
-  db.exec('PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS cooldowns (id TEXT PRIMARY KEY, ready_at INTEGER NOT NULL)');
+  db.exec('PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS cooldowns (id TEXT PRIMARY KEY, ready_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS tries (proxy TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS tries_proxy ON tries (proxy, at)');
   return db;
 }
 

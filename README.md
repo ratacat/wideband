@@ -318,7 +318,7 @@ The scheduler coordinates CLI processes and SDK clients under the same home dire
 - Each page has a 75-second deadline, which covers the 45-second proxy wait and the request that follows it. Each network attempt has a 20-second timeout.
 - Google has a 120-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
 
-These timings are wideband's policy, not a Google-approved request rate. The scheduler database contains hashes and timestamps, not credentials. State is shared on the same machine and home directory; separate machines do not coordinate their proxy usage automatically.
+These timings are wideband's policy, not a Google-approved request rate. The scheduler database contains hashes, proxy `host:port` pairs, and timestamps, not credentials. Its `tries` table keeps one row for each proxy try with the proxy, the time, and the outcome (`ok`, `blocked`, `transport`, and so on). List the history of one proxy with `sqlite3 -readonly ~/.wideband/google-proxies.sqlite "SELECT datetime(at/1000,'unixepoch','localtime'), outcome FROM tries WHERE proxy='HOST:PORT' ORDER BY at"`. State is shared on the same machine and home directory; separate machines do not coordinate their proxy usage automatically.
 
 Cancellation kills the transport process group on macOS and Linux and waits for it to close. If a later page fails, earlier hits remain available with provider status `partial` and `complete: false`.
 
