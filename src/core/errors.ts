@@ -12,6 +12,7 @@ export type AdapterErrorCode =
 
 export class AdapterError extends Error {
   readonly _tag = 'AdapterError'
+  reason?: string
   constructor(
     public code: AdapterErrorCode,
     message: string,

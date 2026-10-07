@@ -338,7 +338,8 @@ For a failed first search:
 
 - For an `inventory` error, check the file path, contents, and permissions first. Errors mentioning reservations point to the local SQLite scheduler or its filesystem access.
 - A `runtime` error means the subprocess could not start or complete. Run the uv dependency command above in the same environment.
-- An `exhausted` error lists failed proxy attempts. Check proxy authentication, IP allowlisting, exit reputation, and the provider's network access.
+- An `exhausted` error lists each failed proxy attempt in order, such as `blocked, blocked, transport`. A final `unavailable` means no other connection became free in time. Check proxy authentication, IP allowlisting, exit reputation, and the provider's network access.
+- The ledger records each failed Google page as `google:<reason>` in `attempts.error_code`, such as `google:unavailable` or `google:blocked,transport`. Count recent reasons with `sqlite3 -readonly ~/.wideband/ledger.db "SELECT error_code, count(*) FROM attempts WHERE provider='google' AND status='error' GROUP BY 1 ORDER BY 2 DESC"`.
 - A timeout can mean all connections are cooling down. Wait or use a healthy pool; raising the overall timeout does not remove the page deadline.
 - An `unrecognized` error means the HTML parser could not identify results or an explicit no-results page. Check the parser against the returned page format.
 

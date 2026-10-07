@@ -27,7 +27,10 @@ export const google: ProviderAdapter = {
           retryable: false,
           run: searchEffect(query.q, start).pipe(
             Effect.mapError(error => error instanceof SearchError
-              ? new AdapterError(error.code === 'timeout' ? 'timeout' : error.code === 'invalid_response' ? 'invalid_response' : error.code === 'transport' ? 'transport' : 'provider_error', `Google ${error.code}: ${error.message}`)
+              ? Object.assign(
+                  new AdapterError(error.code === 'timeout' || error.code === 'invalid_response' ? error.code : 'provider_error', `Google ${error.code}: ${error.message}`),
+                  { reason: `google:${error.failures.join(',') || error.code}` },
+                )
               : new AdapterError('provider_error', 'Google search failed; check uv, Python, and proxy inventory')),
             Effect.result,
             Effect.map(result => ({ result })),

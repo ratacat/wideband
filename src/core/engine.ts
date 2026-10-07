@@ -288,7 +288,7 @@ function executeRequest<A>(
             status: error ? 'error' : 'ok',
             charge,
             ...(error?.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
-            ...(error ? { errorCode: error.code } : {}),
+            ...(error ? { errorCode: error.reason ?? error.code } : {}),
           }
           if (error?.code === 'rate_limit' && error.httpStatus === 429)
             pacing.nextAt = Math.max(pacing.nextAt, Date.now() + (error.retryAfterMs ?? 300))

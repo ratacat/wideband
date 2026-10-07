@@ -7,7 +7,8 @@ export type Search = (query: string, start?: number, options?: SearchOptions) =>
 export type SearchEffect = (query: string, start?: number) => Effect.Effect<GooglePage, SearchError | TypeError>;
 export class SearchError extends Error {
   code: string;
-  constructor(code: string, message: string);
+  failures: readonly string[];
+  constructor(code: string, message: string, failures?: readonly string[]);
 }
 export function parseResults(html: string, start?: number): ParsedResults;
 export function createSearchEffect(): SearchEffect;

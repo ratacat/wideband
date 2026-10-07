@@ -34,10 +34,11 @@ const Response = Schema.Union([
 const decodeResponse = Schema.decodeUnknownSync(Response);
 
 export class SearchError extends Error {
-  constructor(code, message) {
+  constructor(code, message, failures = []) {
     super(message);
     this.name = 'SearchError';
     this.code = code;
+    this.failures = failures;
   }
 }
 
@@ -205,6 +206,7 @@ export function createSearchEffect() {
         }
         if (lease.id === null) {
           if (!failures.length) return yield* Effect.fail(new SearchError('unavailable', 'No Google proxy is free; every proxy is resting or blocked.'));
+          failures.push('unavailable');
           break;
         }
         const proxy = pool.find(proxy => proxy.id === lease.id);
@@ -229,7 +231,7 @@ export function createSearchEffect() {
         });
         failures.push(error.code);
       }
-      return yield* Effect.fail(new SearchError('exhausted', `Search failed after ${failures.length} proxy attempts: ${failures.join(', ')}.`));
+      return yield* Effect.fail(new SearchError('exhausted', `Every Google proxy try failed: ${failures.join(', ')}.`, failures));
     }).pipe(Effect.timeoutOrElse({
       duration: 45_000,
       orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
