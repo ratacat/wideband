@@ -208,9 +208,7 @@ export function createSearchEffect() {
           break;
         }
         const proxy = pool.find(proxy => proxy.id === lease.id);
-        if (!proxy) return yield* Effect.fail(new SearchError('inventory', 'Proxy reservation does not match inventory.'));
         attempted.add(proxy.id);
-        yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
         const page = yield* fetchPage({ query, start, proxy: proxy.url });
         const parsed = yield* Effect.result(Effect.try({
           try: () => {
@@ -262,14 +260,15 @@ async function reserve(pool) {
     const slots = pool.map(() => '?').join(',');
     const row = db.prepare(`SELECT id, ready_at FROM cooldowns WHERE id IN (${slots}) ORDER BY ready_at, random() LIMIT 1`).get(...pool.map(proxy => proxy.id));
     if (!row) throw new SearchError('inventory', 'No proxy available.');
-    const readyAt = Math.max(Date.now(), Number(row.ready_at));
-    if (Number(row.ready_at) > Date.now()) {
+    const now = Date.now();
+    const readyAt = Number(row.ready_at);
+    if (readyAt > now) {
       db.exec('COMMIT');
       return { id: null, readyAt };
     }
-    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(readyAt + PROXY_SPACING_MS, row.id);
+    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(now + PROXY_SPACING_MS, row.id);
     db.exec('COMMIT');
-    return { id: row.id, readyAt };
+    return { id: row.id };
   } finally {
     db.close();
   }
