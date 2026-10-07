@@ -23,6 +23,7 @@ except requests.exceptions.RequestException:
 
 const PROXY_SPACING_MS = 180_000;
 const PROXY_WAIT_MS = 45_000;
+const PAGE_TIMEOUT_MS = 75_000;
 const FAILURE_REST_MS = 900_000;
 const BLOCK_REST_MS = 7_200_000;
 const BLOCKS = new Set(['blocked', 'challenge']);
@@ -196,9 +197,9 @@ export function createSearchEffect() {
       });
       const failures = [];
       const attempted = new Set();
+      const deadline = Date.now() + PROXY_WAIT_MS;
       for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
         const available = pool.filter(proxy => !attempted.has(proxy.id));
-        const deadline = Date.now() + PROXY_WAIT_MS;
         let lease = yield* proxyOperation(() => reserve(available));
         while (lease.id === null && lease.readyAt <= deadline) {
           yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
@@ -233,7 +234,7 @@ export function createSearchEffect() {
       }
       return yield* Effect.fail(new SearchError('exhausted', `Every Google proxy try failed: ${failures.join(', ')}.`, failures));
     }).pipe(Effect.timeoutOrElse({
-      duration: 45_000,
+      duration: PAGE_TIMEOUT_MS,
       orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
     }));
   };
