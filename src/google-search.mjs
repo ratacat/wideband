@@ -26,6 +26,7 @@ const PROXY_WAIT_MS = 45_000;
 const PAGE_TIMEOUT_MS = 75_000;
 const FAILURE_REST_MS = 900_000;
 const BLOCK_REST_MS = 7_200_000;
+const TRY_HISTORY_MS = 604_800_000;
 const BLOCKS = new Set(['blocked', 'challenge']);
 
 const Response = Schema.Union([
@@ -228,6 +229,7 @@ export function createSearchEffect() {
           const db = await proxyStore();
           try {
             db.prepare('INSERT INTO tries (proxy, at, outcome) VALUES (?, ?, ?)').run(proxy.host, Date.now(), error ? error.code ?? 'error' : 'ok');
+            db.prepare('DELETE FROM tries WHERE at < ?').run(Date.now() - TRY_HISTORY_MS);
             if (rest) db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + (BLOCKS.has(error.code) ? BLOCK_REST_MS : FAILURE_REST_MS), proxy.id);
           } finally { db.close(); }
         });
@@ -253,7 +255,7 @@ async function proxyStore() {
   const directory = join(homedir(), '.wideband');
   mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(join(directory, 'google-proxies.sqlite'));
-  db.exec('PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS cooldowns (id TEXT PRIMARY KEY, ready_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS tries (proxy TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS tries_proxy ON tries (proxy, at)');
+  db.exec('PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS cooldowns (id TEXT PRIMARY KEY, ready_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS tries (proxy TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS tries_at ON tries (at)');
   return db;
 }
 
