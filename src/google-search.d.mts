@@ -12,6 +12,12 @@ export class SearchError extends Error {
   failures: readonly string[];
   constructor(code: string, message: string, failures?: readonly string[]);
 }
+export type SorryForm = { sitekey: string; dataS: string; q: string; continue: string };
+export type Solution = { token: string; microUSD: number };
+export const SOLVE_TIMEOUT_MS: number;
+export const SOLVE_MICRO_USD_MAX: number;
+export function sorryForm(html: string): SorryForm | null;
+export function solveSorry(input: { pageUrl: string; form: SorryForm; proxy: string; cookies: Record<string, string> }): Effect.Effect<Solution, SearchError>;
 export function proxyUrls(): string[];
 export function stickyProxy(proxy: string, slot: number): string;
 export function recordTry(row: GoogleTry): Promise<void>;

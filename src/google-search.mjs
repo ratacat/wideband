@@ -10,9 +10,8 @@ const PYTHON = `import json, sys
 from curl_cffi import requests
 data = json.load(sys.stdin)
 try:
-    response = requests.get(
-        "https://www.google.com/search",
-        params={"q": data["query"], "start": data["start"], "hl": "en", "gl": "us", "pws": "0", "sca_esv": "1", "gbv": "1"},
+    response = requests.request(
+        data["method"], data["url"], params=data.get("params"), data=data.get("form"),
         headers=data["headers"], cookies=data["cookies"], default_headers=False, http_version="v1",
         proxy=data["proxy"], impersonate="chrome99_android", timeout=20, allow_redirects=False,
     )
@@ -29,6 +28,12 @@ const LEASE_MS = 30_000;
 const SLOT_IDLE_MS = 1_800_000;
 const FIRST_HTTP_SLOT = 50_000;
 const HTTP_SLOTS = 50_000;
+const SEARCH_URL = 'https://www.google.com/search';
+const SORRY_URL = 'https://www.google.com/sorry/index';
+const SOLVER_URL = 'https://api.2captcha.com';
+const SOLVE_POLL_MS = 5_000;
+export const SOLVE_TIMEOUT_MS = 120_000;
+export const SOLVE_MICRO_USD_MAX = 3_000;
 const FAMILIES = new Map(families.map(({ family, headers }) => [family, headers]));
 const AGENTS = families.flatMap(({ family, agents }) => agents.map(agent => ({ family, agent })));
 
@@ -37,6 +42,13 @@ const Response = Schema.Union([
   Schema.Struct({ error: Schema.Literal('transport') }),
 ]);
 const decodeResponse = Schema.decodeUnknownSync(Response);
+const SolverFailure = Schema.Struct({ errorId: Schema.Finite.check(Schema.isGreaterThan(0)), errorCode: Schema.String });
+const decodeCreated = Schema.decodeUnknownSync(Schema.Union([Schema.Struct({ errorId: Schema.Literal(0), taskId: Schema.Finite }), SolverFailure]));
+const decodeTaskResult = Schema.decodeUnknownSync(Schema.Union([
+  Schema.Struct({ errorId: Schema.Literal(0), status: Schema.Literal('processing') }),
+  Schema.Struct({ errorId: Schema.Literal(0), status: Schema.Literal('ready'), cost: Schema.String, solution: Schema.Struct({ gRecaptchaResponse: Schema.String }) }),
+  SolverFailure,
+]));
 
 export class SearchError extends Error {
   constructor(code, message, failures = []) {
@@ -105,7 +117,20 @@ export function parseResults(html, start = 0) {
   return { results, nextStart };
 }
 
-function fetchPage(input) {
+export function sorryForm(html) {
+  const $ = load(html);
+  const form = $('#captcha-form');
+  const widget = $('.g-recaptcha').first();
+  const fields = {
+    sitekey: widget.attr('data-sitekey'),
+    dataS: widget.attr('data-s'),
+    q: form.find('input[name="q"]').attr('value'),
+    continue: form.find('input[name="continue"]').attr('value'),
+  };
+  return Object.values(fields).every(Boolean) ? fields : null;
+}
+
+function transport(input) {
   return Effect.callback((resume, signal) => {
     const child = spawn('uv', ['run', '--quiet', '--with', 'curl-cffi==0.16.3', 'python', '-c', PYTHON], { stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     let closed;
@@ -142,6 +167,45 @@ function fetchPage(input) {
     child.stdin.end(JSON.stringify(input));
     return Effect.promise(() => { kill(); return done; });
   });
+}
+
+const solveFailure = (code, message) => new SearchError('solve', message, [`solve:${code}`]);
+
+function askSolver(method, body, decode) {
+  return Effect.tryPromise({
+    try: signal => fetch(`${SOLVER_URL}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientKey: process.env.WIDEBAND_2CAPTCHA_KEY, ...body }), signal }).then(response => response.json()),
+    catch: () => solveFailure('transport', 'The captcha solver could not be reached.'),
+  }).pipe(
+    Effect.flatMap(json => Effect.try({ try: () => decode(json), catch: () => solveFailure('invalid_response', 'The captcha solver returned invalid output.') })),
+    Effect.flatMap(reply => reply.errorId ? Effect.fail(solveFailure(reply.errorCode, `The captcha solver answered ${reply.errorCode}.`)) : Effect.succeed(reply)),
+  );
+}
+
+export function solveSorry({ pageUrl, form, proxy, cookies }) {
+  const exit = new URL(proxy);
+  const task = {
+    type: 'RecaptchaV2EnterpriseTask',
+    websiteURL: pageUrl,
+    websiteKey: form.sitekey,
+    enterprisePayload: { s: form.dataS },
+    cookies: Object.entries(cookies).map(([name, value]) => `${name}=${value}`).join('; '),
+    proxyType: exit.protocol.slice(0, -1),
+    proxyAddress: exit.hostname,
+    proxyPort: Number(exit.port || 80),
+    proxyLogin: decodeURIComponent(exit.username),
+    proxyPassword: decodeURIComponent(exit.password),
+  };
+  return Effect.gen(function* () {
+    const { taskId } = yield* askSolver('createTask', { task }, decodeCreated);
+    for (;;) {
+      yield* Effect.sleep(SOLVE_POLL_MS);
+      const result = yield* askSolver('getTaskResult', { taskId }, decodeTaskResult);
+      if (result.status === 'ready') return { token: result.solution.gRecaptchaResponse, microUSD: Math.round(Number(result.cost) * 1e6) };
+    }
+  }).pipe(Effect.timeoutOrElse({
+    duration: SOLVE_TIMEOUT_MS,
+    orElse: () => Effect.fail(solveFailure('timeout', 'The captcha solver did not answer in time.')),
+  }));
 }
 
 function proxyUrl(host, port, username, password, protocol = 'http') {
@@ -256,7 +320,7 @@ export function createSearchEffect() {
       for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
         const slot = yield* Effect.tryPromise(() => lease(Date.now())).pipe(Effect.orElseSucceed(() => freshSlot(new Set())));
         const proxy = stickyProxy(proxies[slot.slot % proxies.length], slot.slot);
-        const page = yield* fetchPage({ query, start, proxy, headers: { ...FAMILIES.get(slot.family), 'User-Agent': slot.agent }, cookies: slot.cookies });
+        const page = yield* transport({ method: 'GET', url: SEARCH_URL, params: { q: query, start, hl: 'en', gl: 'us', pws: '0', sca_esv: '1', gbv: '1' }, headers: { ...FAMILIES.get(slot.family), 'User-Agent': slot.agent }, cookies: slot.cookies, proxy });
         const parsed = yield* Effect.result(Effect.try({
           try: () => {
             if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
