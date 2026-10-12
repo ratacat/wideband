@@ -3,7 +3,7 @@ import { mkdirSync, openSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Effect, Schema } from 'effect'
-import { SearchError } from '../google-search.mjs'
+import { SearchError, SOLVE_TIMEOUT_MS } from '../google-search.mjs'
 import type { GooglePage } from '../google-search.mjs'
 
 export const BROWSER_PORT = 47651
@@ -50,7 +50,7 @@ async function askDaemon(query: string, start: number, signal: AbortSignal): Pro
 
 export function browserPage(query: string, start: number): Effect.Effect<GooglePage, SearchError> {
   return Effect.tryPromise({
-    try: signal => askDaemon(query, start, AbortSignal.any([signal, AbortSignal.timeout(BROWSER_REPLY_MS)])),
+    try: signal => askDaemon(query, start, AbortSignal.any([signal, AbortSignal.timeout(BROWSER_REPLY_MS + SOLVE_TIMEOUT_MS)])),
     catch: () => new SearchError('browser', 'The browser route returned no usable reply.', ['browser:unavailable']),
   }).pipe(Effect.flatMap(reply => reply.ok
     ? Effect.succeed({ query, start, results: [...reply.results], nextStart: reply.nextStart, microUSD: reply.microUSD })

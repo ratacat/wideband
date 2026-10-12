@@ -22,6 +22,7 @@ export function proxyUrls(): string[];
 export function stickyProxy(proxy: string, slot: number): string;
 export function recordTry(row: GoogleTry): Promise<void>;
 export function browserFailures(sinceMs: number): Promise<number>;
+export function solverReady(): Promise<boolean>;
 export function parseResults(html: string, start?: number): ParsedResults;
 export function createSearchEffect(): SearchEffect;
 export const searchEffect: SearchEffect;
