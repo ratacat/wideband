@@ -107,7 +107,7 @@ export function wideband(opts: WidebandOptions = {}) {
       const { engine } = yield* Client
       const providers = yield* Effect.try({ try: () => engine.providerInfo(), catch: () => new WidebandError('LEDGER_ERROR', 'Could not read search ledger') })
       const missingKeys = providers.flatMap(provider => provider.envKey && !provider.keyPresent ? [provider.envKey] : [])
-      const checks = yield* Effect.forEach(providers.filter(provider => provider.configured), provider =>
+      const checks = yield* Effect.forEach(providers.filter(provider => provider.configured && !provider.optIn), provider =>
         engine.sweep(parseQuery({ q: 'wideband connectivity check', max: 1 }), { providers: [provider.name], fresh: true, timeoutMs: 8000 }, 'doctor').pipe(
           Effect.map((result): DoctorCheck => {
             const stats = result.stats.providers[provider.name]

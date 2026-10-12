@@ -36,6 +36,7 @@ type EngineOptions = { getKey?: (envKey: string) => string | undefined }
 export type ProviderInfo = {
   name: string
   configured: boolean
+  optIn: boolean
   keyPresent: boolean
   envKey?: string
   costModel: ProviderAdapter['costModel']
@@ -703,6 +704,7 @@ export class Engine {
       return {
         name: adapter.name,
         configured: !adapter.envKey || keyPresent,
+        optIn: Boolean(adapter.optIn),
         keyPresent,
         envKey: adapter.envKey,
         costModel: adapter.costModel,
