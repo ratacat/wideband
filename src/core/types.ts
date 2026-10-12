@@ -216,6 +216,7 @@ export type Capabilities = {
   domainFilters: boolean
   fullContent: boolean
   maxPerRequest: number
+  pages?: boolean
 }
 export type Charge =
   | { kind: 'observed'; microUSD: number }

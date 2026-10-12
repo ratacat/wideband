@@ -1,0 +1,37 @@
+[
+  {
+    "family": "samsung-netfront",
+    "headers": {
+      "User-Agent": null,
+      "Accept": "application/vnd.wap.xhtml+xml,application/xhtml+xml,text/html,text/vnd.wap.wml,*/*;q=0.1",
+      "Accept-Language": "en",
+      "Accept-Charset": "utf-8, iso-8859-1",
+      "Accept-Encoding": "gzip, deflate"
+    },
+    "agents": [
+      "SAMSUNG-GT-B3410/B3410XXIK1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3011/C3011XXKA1 NetFront/4.1 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3222/C3222XXKG1 NetFront/4.1 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3300K/1.0 NetFront/4.1 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3303/C3303XXJA1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3322/C3322XXKH1 NetFront/4.2 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3510/C3510XXJA1 NetFront/4.0 Profile/MIDP-2.0 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C3530/C3530XXJE1 NetFront/4.0 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-C5212/C5212XXIK1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E1080/E1080XXJB1 NetFront/4.0 Profile/MIDP-2.0 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E1200/E1200XXKL1 NetFront/4.2 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E2121B/E2121BXXJD1 NetFront/3.5 Profile/MIDP-2.0 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E2232/E2232XXKE1 NetFront/4.2 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E2550/E2550XXIK1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-E2652W/E2652WXXKC1 NetFront/4.1 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-M2310/M2310XXIL1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S3370/S3370XXJB1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S3650/S3650XXIL5 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S5230/S5230XXJA1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S5233/S5233XXJA1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S5600/S5600XXIB1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S5610/S5610XXKC1 NetFront/4.1 Profile/MIDP-2.1 Configuration/CLDC-1.1",
+      "SAMSUNG-GT-S7070/S7070XXIK1 NetFront/3.5 Profile/MIDP-2.1 Configuration/CLDC-1.1"
+    ]
+  }
+]

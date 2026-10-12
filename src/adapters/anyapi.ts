@@ -29,6 +29,7 @@ export const anyapi: ProviderAdapter = {
     domainFilters: false,
     fullContent: false,
     maxPerRequest: 100,
+    pages: true,
   },
   costModel: { kind: 'metered', perRequestUSD: 0.0005 },
   search(q, ctx) {

@@ -15,9 +15,10 @@ const HELP = `wideband — fan-out search across providers, merged unique source
   stats           uniqueness, cost/unique-source, latency by provider
   costs           month-to-date spend
   doctor          live-validate keys
+  browser         run the warm Google browser pool on 127.0.0.1:47651 (started on demand)
   schema [type]   JSON Schema for outputs
 flags:
-  --google-pages N fetch up to 1–10 Google or AnyAPI pages (default 1)
+  --google-pages N fetch up to 1–10 Google, AnyAPI or Maps pages (default 1)
   --max N         results per provider, 1–100; defaults to 10 × Google pages when specified
   --budget USD    limit estimated request costs, including pages and retries
   --timeout MS    provider deadline, including retries and waits
@@ -247,6 +248,12 @@ async function run() {
   const command = positionals[0]
   if (!command) {
     console.log(HELP)
+    return 0
+  }
+
+  if (command === 'browser') {
+    const { serve } = await import('../browser/daemon')
+    await serve()
     return 0
   }
 

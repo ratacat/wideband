@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
-import { searchEffect, SearchError } from '../google-search.mjs'
+import { SearchError } from '../google-search.mjs'
 import type { GooglePage } from '../google-search.mjs'
+import { googlePage } from '../google-route'
 import { AdapterError } from '../core/errors'
 import { canonicalizeUrl } from '../core/merge'
 import type { Hit, ProviderAdapter } from '../core/types'
@@ -14,6 +15,7 @@ export const google: ProviderAdapter = {
     domainFilters: false,
     fullContent: false,
     maxPerRequest: 100,
+    pages: true,
   },
   costModel: { kind: 'free' },
   search(query, ctx) {
@@ -25,7 +27,7 @@ export const google: ProviderAdapter = {
           requestId: `page:${page + 1}`,
           estimateMicroUSD: 0,
           retryable: false,
-          run: searchEffect(query.q, start).pipe(
+          run: googlePage(query.q, start).pipe(
             Effect.mapError(error => error instanceof SearchError
               ? Object.assign(
                   new AdapterError(error.code === 'timeout' || error.code === 'invalid_response' ? error.code : 'provider_error', `Google ${error.code}: ${error.message}`),

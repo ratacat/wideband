@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load } from 'cheerio';
 import { Effect, Schema } from 'effect';
+import families from './google-agents.json' with { type: 'json' };
 
 const PYTHON = `import json, sys
 from curl_cffi import requests
@@ -13,24 +13,21 @@ try:
     response = requests.get(
         "https://www.google.com/search",
         params={"q": data["query"], "start": data["start"], "hl": "en", "gl": "us", "pws": "0", "sca_esv": "1", "gbv": "1"},
-        headers={"User-Agent": "NokiaN72/2.0617.1.0.3 Series60/2.8 Profile/MIDP-2.0 Configuration/CLDC-1.1"},
+        headers=data["headers"], default_headers=False, http_version="v1",
         proxy=data["proxy"], impersonate="chrome99_android", timeout=20, allow_redirects=False,
     )
-    print(json.dumps({"status": response.status_code, "location": response.headers.get("location", ""), "html": response.text}))
+    print(json.dumps({"status": response.status_code, "location": response.headers.get("location", ""), "html": response.text, "bytes": response.request_size + response.header_size + response.download_size}))
 except requests.exceptions.RequestException:
     print(json.dumps({"error": "transport"}))
 `;
 
-const PROXY_SPACING_MS = 180_000;
-const PROXY_WAIT_MS = 45_000;
+const ATTEMPTS = 3;
 const PAGE_TIMEOUT_MS = 75_000;
-const FAILURE_REST_MS = 900_000;
-const BLOCK_REST_MS = 7_200_000;
 const TRY_HISTORY_MS = 604_800_000;
-const BLOCKS = new Set(['blocked', 'challenge']);
+const AGENTS = families.flatMap(({ family, headers, agents }) => agents.map(agent => ({ family, agent, headers: { ...headers, 'User-Agent': agent } })));
 
 const Response = Schema.Union([
-  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), location: Schema.String, html: Schema.String }),
+  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), location: Schema.String, html: Schema.String, bytes: Schema.Finite.check(Schema.isInt()) }),
   Schema.Struct({ error: Schema.Literal('transport') }),
 ]);
 const decodeResponse = Schema.decodeUnknownSync(Response);
@@ -96,6 +93,7 @@ export function parseResults(html, start = 0) {
     if (/enable javascript|not redirected within a few seconds|trouble accessing Google Search/i.test(text)) {
       throw new SearchError('challenge', 'Google returned a JavaScript challenge.');
     }
+    if (/browser isn't supported anymore/i.test(text)) throw new SearchError('unsupported', 'Google does not serve this User-Agent.');
     throw new SearchError('unrecognized', 'No organic results or explicit no-results message found.');
   }
   return { results, nextStart };
@@ -155,7 +153,7 @@ function proxyFromLine(line, number) {
   return split < 0 ? proxyUrl(host, port, credentials) : proxyUrl(host, port, credentials.slice(0, split), credentials.slice(split + 1));
 }
 
-function proxyUrls() {
+export function proxyUrls() {
   const file = process.env.WIDEBAND_PROXY_FILE;
   if (!file) throw new SearchError('inventory', 'Set WIDEBAND_PROXY_FILE to a file with one proxy per line.');
   let text;
@@ -176,68 +174,71 @@ function proxyUrls() {
   });
 }
 
-function proxyOperation(operation) {
-  return Effect.tryPromise({
-    try: operation,
-    catch: error => error instanceof SearchError ? error : new SearchError('inventory', 'Google proxy reservations failed.'),
-  });
+function exitIp(location = '') {
+  const token = URL.canParse(location) ? new URL(location).searchParams.get('q') : null;
+  const bytes = Buffer.from(token ?? '', 'base64url');
+  return bytes[0] === 0x12 && bytes[1] === 4 ? bytes.subarray(2, 6).join('.') : null;
+}
+
+export async function recordTry(row) {
+  const { DatabaseSync } = await import('node:sqlite');
+  const directory = join(homedir(), '.wideband');
+  mkdirSync(directory, { recursive: true });
+  const db = new DatabaseSync(join(directory, 'google-tries.sqlite'));
+  try {
+    db.exec("PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS tries (at INTEGER NOT NULL, query TEXT NOT NULL, attempt INTEGER NOT NULL, outcome TEXT NOT NULL, ip TEXT, bytes INTEGER, proxy TEXT NOT NULL, family TEXT, agent TEXT, route TEXT NOT NULL DEFAULT 'http'); CREATE INDEX IF NOT EXISTS tries_at ON tries (at)");
+    if (!db.prepare('PRAGMA table_info(tries)').all().some(column => column.name === 'route')) db.exec("ALTER TABLE tries ADD COLUMN route TEXT NOT NULL DEFAULT 'http'");
+    db.prepare('INSERT INTO tries (at, route, query, attempt, outcome, ip, bytes, proxy, family, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(Date.now(), row.route, row.query, row.attempt, row.outcome, row.ip, row.bytes, row.proxy, row.family, row.agent);
+    db.prepare('DELETE FROM tries WHERE at < ?').run(Date.now() - TRY_HISTORY_MS);
+  } finally { db.close(); }
+}
+
+export async function tryCounts(sinceMs) {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(join(homedir(), '.wideband', 'google-tries.sqlite'));
+  try {
+    const row = db.prepare("SELECT count(*) FILTER (WHERE route = 'http') AS httpTries, count(*) FILTER (WHERE route = 'http' AND outcome = 'ok') AS httpPassed, count(*) FILTER (WHERE route = 'browser' AND outcome != 'ok') AS browserFailed FROM tries WHERE at >= ?").get(Date.now() - sinceMs);
+    return { httpTries: Number(row.httpTries), httpPassed: Number(row.httpPassed), browserFailed: Number(row.browserFailed) };
+  } catch {
+    return { httpTries: 0, httpPassed: 0, browserFailed: 0 };
+  } finally { db.close(); }
 }
 
 export function createSearchEffect() {
   return function searchEffect(query, start = 0) {
     return Effect.gen(function* () {
-      const pool = yield* Effect.try({
+      const proxies = yield* Effect.try({
         try: () => {
           if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
           if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
-          const proxies = proxyUrls().map(url => ({ url, host: new URL(url).host, id: createHash('sha256').update(url).digest('hex') }));
+          const proxies = proxyUrls();
           if (!proxies.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
           return proxies;
         },
         catch: error => error,
       });
       const failures = [];
-      const attempted = new Set();
-      const deadline = Date.now() + PROXY_WAIT_MS;
-      for (let attempt = 0; attempt < Math.min(3, pool.length); attempt++) {
-        const available = pool.filter(proxy => !attempted.has(proxy.id));
-        let lease = yield* proxyOperation(() => reserve(available));
-        while (lease.id === null && lease.readyAt <= deadline) {
-          yield* Effect.sleep(Math.max(0, lease.readyAt - Date.now()));
-          lease = yield* proxyOperation(() => reserve(available));
-        }
-        if (lease.id === null) {
-          if (!failures.length) return yield* Effect.fail(new SearchError('unavailable', 'No Google proxy is free; every proxy is resting or blocked.'));
-          failures.push('unavailable');
-          break;
-        }
-        const proxy = pool.find(proxy => proxy.id === lease.id);
-        attempted.add(proxy.id);
-        const page = yield* fetchPage({ query, start, proxy: proxy.url });
+      for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+        const proxy = proxies[Math.floor(Math.random() * proxies.length)];
+        const { family, agent, headers } = AGENTS[Math.floor(Math.random() * AGENTS.length)];
+        const page = yield* fetchPage({ query, start, proxy, headers });
         const parsed = yield* Effect.result(Effect.try({
           try: () => {
             if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
-            if (page.status === 429 || page.location.includes('/sorry')) throw new SearchError('blocked', `Google blocked this proxy with HTTP ${page.status}.`);
+            if (page.status === 429 || page.location.includes('/sorry')) throw new SearchError('blocked', `Google blocked this exit IP with HTTP ${page.status}.`);
             if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
             return { query, start, ...parseResults(page.html, start) };
           },
           catch: error => error,
         }));
         const error = parsed._tag === 'Failure' ? parsed.failure : undefined;
-        const rest = error instanceof SearchError && error.code !== 'unrecognized';
-        yield* proxyOperation(async () => {
-          const db = await proxyStore();
-          try {
-            db.prepare('INSERT INTO tries (proxy, at, outcome) VALUES (?, ?, ?)').run(proxy.host, Date.now(), error ? error.code ?? 'error' : 'ok');
-            db.prepare('DELETE FROM tries WHERE at < ?').run(Date.now() - TRY_HISTORY_MS);
-            if (rest) db.prepare('UPDATE cooldowns SET ready_at = MAX(ready_at, ?) WHERE id = ?').run(Date.now() + (BLOCKS.has(error.code) ? BLOCK_REST_MS : FAILURE_REST_MS), proxy.id);
-          } finally { db.close(); }
-        });
+        const outcome = error ? error.code ?? 'error' : 'ok';
+        yield* Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family, agent })).pipe(Effect.ignore);
         if (!error) return parsed.success;
-        if (!rest) return yield* Effect.fail(error);
+        if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
         failures.push(error.code);
       }
-      return yield* Effect.fail(new SearchError('exhausted', `Every Google proxy try failed: ${failures.join(', ')}.`, failures));
+      return yield* Effect.fail(new SearchError('exhausted', `Every Google try failed: ${failures.join(', ')}.`, failures));
     }).pipe(Effect.timeoutOrElse({
       duration: PAGE_TIMEOUT_MS,
       orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
@@ -248,38 +249,6 @@ export function createSearchEffect() {
 export function createSearch() {
   const run = createSearchEffect();
   return (query, start = 0, options = {}) => Effect.runPromise(run(query, start), { signal: options.signal });
-}
-
-async function proxyStore() {
-  const { DatabaseSync } = await import('node:sqlite');
-  const directory = join(homedir(), '.wideband');
-  mkdirSync(directory, { recursive: true });
-  const db = new DatabaseSync(join(directory, 'google-proxies.sqlite'));
-  db.exec('PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS cooldowns (id TEXT PRIMARY KEY, ready_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS tries (proxy TEXT NOT NULL, at INTEGER NOT NULL, outcome TEXT NOT NULL); CREATE INDEX IF NOT EXISTS tries_at ON tries (at)');
-  return db;
-}
-
-async function reserve(pool) {
-  const db = await proxyStore();
-  try {
-    db.exec('BEGIN IMMEDIATE');
-    const insert = db.prepare('INSERT OR IGNORE INTO cooldowns (id, ready_at) VALUES (?, 0)');
-    for (const proxy of pool) insert.run(proxy.id);
-    const slots = pool.map(() => '?').join(',');
-    const row = db.prepare(`SELECT id, ready_at FROM cooldowns WHERE id IN (${slots}) ORDER BY ready_at, random() LIMIT 1`).get(...pool.map(proxy => proxy.id));
-    if (!row) throw new SearchError('inventory', 'No proxy available.');
-    const now = Date.now();
-    const readyAt = Number(row.ready_at);
-    if (readyAt > now) {
-      db.exec('COMMIT');
-      return { id: null, readyAt };
-    }
-    db.prepare('UPDATE cooldowns SET ready_at = ? WHERE id = ?').run(now + PROXY_SPACING_MS, row.id);
-    db.exec('COMMIT');
-    return { id: row.id };
-  } finally {
-    db.close();
-  }
 }
 
 export const searchEffect = createSearchEffect();

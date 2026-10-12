@@ -3,6 +3,8 @@ export type GoogleResult = { rank: number; title: string; url: string; snippet: 
 export type ParsedResults = { results: GoogleResult[]; nextStart: number | null };
 export type GooglePage = ParsedResults & { query: string; start: number };
 export type SearchOptions = { signal?: AbortSignal };
+export type GoogleRoute = 'http' | 'maps' | 'browser';
+export type GoogleTry = { route: GoogleRoute; query: string; attempt: number; outcome: string; ip: string | null; bytes: number | null; proxy: string; family: string | null; agent: string | null };
 export type Search = (query: string, start?: number, options?: SearchOptions) => Promise<GooglePage>;
 export type SearchEffect = (query: string, start?: number) => Effect.Effect<GooglePage, SearchError | TypeError>;
 export class SearchError extends Error {
@@ -10,6 +12,10 @@ export class SearchError extends Error {
   failures: readonly string[];
   constructor(code: string, message: string, failures?: readonly string[]);
 }
+export function proxyUrls(): string[];
+export function recordTry(row: GoogleTry): Promise<void>;
+export type TryCounts = { httpTries: number; httpPassed: number; browserFailed: number };
+export function tryCounts(sinceMs: number): Promise<TryCounts>;
 export function parseResults(html: string, start?: number): ParsedResults;
 export function createSearchEffect(): SearchEffect;
 export const searchEffect: SearchEffect;

@@ -10,7 +10,7 @@ A multi-provider web search API for AI agents. One query runs across configured 
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
 
-- **13 provider adapters** — anyapi (Google results), Brave, Desearch, Exa, Google, Jina, Linkup, Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google is included in default scans.
+- **14 provider adapters** — anyapi (Google results), Brave, Desearch, Exa, Google, Jina, Linkup, Maps (Google Maps places), Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google and Maps are included in default scans.
 - **Real deduplication** — URL canonicalization (tracking params, fragments, default ports stripped) plus metadata union, so five providers returning the same article yield one Source with five provenance entries.
 - **Reciprocal Rank Fusion** ranking — robust across heterogeneous providers, no score-normalization games.
 - **Request accounting.** Each potentially billable attempt reserves budget before dispatch and gets a durable SQLite record. Reported charges, estimates, and unresolved charges remain distinct.
@@ -76,7 +76,7 @@ Key flags:
 
 - `--providers a,b,c` — restrict the fan-out
 - `--max N` — per-provider hit limit, 1–100; providers can return fewer
-- `--google-pages N` — Google or AnyAPI page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include Google or AnyAPI
+- `--google-pages N` — Google, AnyAPI, or Maps page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include one of them
 - `--budget USD` — cap on request reservations, including retries and pages; see the cost model below
 - `--timeout MS` — provider deadline including queue waits, requests, and retries
 - `--stream` — provider snapshots and the final result as NDJSON
@@ -217,6 +217,7 @@ As configured in the adapters (modeled estimate; provider-reported dollars overr
 | Nimble | $0.005/req | trial workspace |
 | anyapi | $0.0005/page base; reserve up to $0.0009 for automatic fallback | provider reports the charge |
 | Google | $0/req; you pay for the proxies | your proxy plan |
+| Maps | $0/req; you pay for the proxies, about 36 KB per page | your proxy plan |
 
 Prices are modeled estimates, not account invoices. Free-tier models assume the allowance applies. `--budget` limits reservations before each attempt. A reported amount replaces its reservation. A lost response retains the reserved estimate and increments `unknownAttempts`; it does not silently become free. Actual provider charges can differ from a stale model, and cancellation cannot undo a dispatched request.
 
@@ -236,6 +237,22 @@ wideband scan "scuba diving shops bonaire" --providers google,brave --google-pag
 wideband scan "site:padi.com/dive-center/" --providers google --google-pages 10
 ```
 
+#### Browser fallback
+
+When Google blocks the HTTP route, the `google` provider asks a local pool of warm headless Chrome sessions for the same page. The pool needs installed Google Chrome and the optional `patchright` package. The first fallback starts it in the background with `wideband browser`. It listens on `127.0.0.1:47651`, logs to `~/.wideband/browser.log`, and exits after 30 idle minutes. `WIDEBAND_GOOGLE_ROUTE` selects the route: `auto` (the default) tries HTTP first and asks the pool when every HTTP try fails or when fewer than 20% of the last 10 minutes' HTTP tries passed, `http` turns the fallback off, and `browser` uses the pool alone.
+
+```sh
+WIDEBAND_GOOGLE_ROUTE=browser wideband scan "live music Ogden UT" --providers google
+```
+
+### Local Maps provider
+
+The `maps` adapter asks Google Maps for places through the same proxy inventory, without a subprocess. Each place becomes one source. The title is the place name, the URL is its website or a Google Maps link to the place, and the snippet joins the address, category, and phone. A page holds up to 20 places, and `--google-pages` reads further pages. A query that names no place returns no Maps results, so Maps adds little to default scans of other topics.
+
+```sh
+wideband scan "live music venue Salt Lake City Utah" --providers maps --max 20
+```
+
 ### Local Google provider
 
 The `google` adapter runs the search transport on your machine and fetches Google's result pages through your proxy inventory. It requires no Google API key or remote search service. Google sees the proxy's exit IP.
@@ -248,12 +265,13 @@ Install Bun 1.4 or newer, [uv](https://docs.astral.sh/uv/getting-started/install
 uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi; print("Google transport ready")'
 ```
 
-Save your proxy provider's connection details in a private file outside the repository, such as `~/.config/wideband/proxies.txt`. Create its parent directory if necessary. One connection per line in `host:port:username:password` format is sufficient:
+Save your proxy provider's connection details in a private file outside the repository, such as `~/.config/wideband/proxies.txt`. Create its parent directory if necessary. Use one line for a rotating residential gateway, which gives every new connection a new exit IP. The `host:port:username:password` format is sufficient:
 
 ```text
-proxy-a.example.net:8080:USERNAME:PASSWORD
-proxy-b.example.net:8080:USERNAME:PASSWORD
+gateway.example.net:80:USERNAME:PASSWORD
 ```
+
+A list of static proxies, one per line, also works. Wideband picks a random line for each try and never rests a proxy, so a static list wears out faster than a rotating gateway.
 
 Replace those example values with your own. Export the file's absolute path, restrict its permissions, and test Google alone:
 
@@ -291,9 +309,11 @@ Credentials in these separate fields are URL-encoded by wideband. Complete URLs 
 
 The transport in [google-search.mjs](src/google-search.mjs) starts `uv`, which runs Python with pinned `curl_cffi==0.16.3`. It passes the query, page offset, and proxy connection through stdin, then receives the response as JSON.
 
-The request targets Google's `/search` endpoint with `gbv=1` and a Nokia feature-phone User-Agent. That combination returns compact HTML containing the search results without requiring a JavaScript browser. As of October 2026, Google answers `/wml/search` with HTTP 403. The request fixes `hl=en`, `gl=us`, and `pws=0`.
+The request targets Google's `/search` endpoint with `gbv=1` and an old feature-phone User-Agent. That combination returns compact HTML containing the search results without requiring a JavaScript browser. A results page is about 5.5 KB gzip-compressed. The request fixes `hl=en`, `gl=us`, and `pws=0`. As of October 2026, Google answers `/wml/search` with HTTP 403.
 
-`curl_cffi` supplies the `chrome99_android` impersonation profile. It controls the TLS and HTTP fingerprint as well as the ordinary request headers. That is why the transport uses this library instead of plain JavaScript `fetch` or standard Python `requests`. [curl_cffi's browser impersonation documentation](https://github.com/lexiforest/curl_cffi#features).
+Each try picks a random User-Agent from [google-agents.json](src/google-agents.json). The file groups agents into families, and each family has its own ordered header set; `"User-Agent": null` marks where the agent goes in that order. The transport sends exactly those headers over HTTP/1.1. Google serves the light page to few User-Agents, and it blocks one after heavy use: NokiaN72 and then Nokia6230i went from mostly ok to blocked on every try within hours. In an October 10, 2026 test of 147 old-browser User-Agents, 23 Samsung `GT-` phones with NetFront 3.5 to 4.2 got results. Most others got Google's "browser isn't supported" page or HTTP 403. Test a new agent through the gateway before you add it.
+
+`curl_cffi` supplies the `chrome99_android` TLS profile, with its default Chrome headers turned off. Google's block followed the User-Agent string, not the TLS profile: in the same test, five TLS profiles gave the same outcome. [curl_cffi's browser impersonation documentation](https://github.com/lexiforest/curl_cffi#features).
 
 Cheerio extracts organic result cards, titles, snippets, and next-page offsets. The parser unwraps Google redirect links; the adapter canonicalizes URLs and removes duplicates. This depends on Google's current page format. CAPTCHA, consent, JavaScript challenges, and unrecognized markup produce errors rather than successful empty results. This is an HTML integration, not a documented Google search API.
 
@@ -301,24 +321,22 @@ Cheerio extracts organic result cards, titles, snippets, and next-page offsets. 
 
 An ordinary home or office IP may work for occasional direct requests. Repeated automated searches can trigger restrictions affecting that public IP, including other users sharing the connection. Google documents these shared-network effects in its [unusual traffic guidance](https://support.google.com/websearch/answer/86640).
 
-For regular or batch use, plan on a proxy pool with pacing. This implementation has been verified with residential proxies. Separate exit IPs spread traffic, while cooldowns prevent rapid reuse. Proxy reputation and traffic from other customers still matter; buying proxies does not guarantee uninterrupted access.
+For regular or batch use, use a rotating residential gateway. This implementation has been verified with one in October 2026. Every try leaves from a new exit IP, so a block costs one retry, not a resting proxy. Proxy reputation and traffic from other customers still matter; buying proxies does not guarantee uninterrupted access.
 
 **The current adapter requires `WIDEBAND_PROXY_FILE` and has no direct-IP mode.** An unset or empty inventory fails before contacting Google. A local forward proxy that uses your machine's public IP still exposes that same exit IP.
 
-Wideband rotates the connections listed in the file. Its scheduler identifies each connection by a hash of its complete proxy URL. It does not discover the actual exit IP behind a rotating gateway. Different connection strings can share an exit IP, and one gateway can change exits. Use your provider's session or endpoint controls when you need distinct or stable exits.
+Each try runs in its own transport process, so it opens a new connection through a line picked at random from the file. Through a rotating gateway, every try leaves from a new exit IP. Wideband does not choose the exit. Use your provider's session or endpoint controls when you need sticky or country-specific exits.
 
-#### Pacing and failure handling
+#### Retries and try history
 
-The scheduler coordinates CLI processes and SDK clients under the same home directory through `~/.wideband/google-proxies.sqlite`. It selects a ready connection and reserves it in a SQLite transaction.
+A page makes at most three tries, each on a new connection. Wideband never paces or rests a proxy.
 
-- The same connection has at least three minutes between reservations. On `/search`, Google blocks an exit IP after far fewer requests than it allowed on the retired `/wml/search`.
-- A block puts that connection on a two-hour cooldown: a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, or a JavaScript challenge. Transport failures and other non-200 responses put it on a fifteen-minute cooldown.
-- A page tries at most three distinct available connections. Unrecognized markup stops the search so a parser change cannot be hidden by repeated proxy attempts.
-- A page waits up to 45 seconds in total for a free connection, shared across its attempts. When no connection becomes free in that time, Google fails at once as `unavailable` instead of waiting for the page deadline.
-- Each page has a 75-second deadline, which covers the 45-second proxy wait and the request that follows it. Each network attempt has a 20-second timeout.
+- A block, a transport failure, or another non-200 response is recorded and retried at once. A block is a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, a consent page, a JavaScript challenge, or the `unsupported` page Google shows a User-Agent it no longer serves.
+- Unrecognized markup stops the search so a parser change cannot be hidden by repeated tries.
+- Each try has a 20-second network timeout, and each page has a 75-second deadline.
 - Google has a 120-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
 
-These timings are wideband's policy, not a Google-approved request rate. The scheduler database contains hashes, proxy `host:port` pairs, and timestamps, not credentials. Its `tries` table keeps one row for each proxy try for seven days, with the proxy, the time, and the outcome (`ok`, `blocked`, `transport`, and so on). List the history of one proxy with `sqlite3 -readonly ~/.wideband/google-proxies.sqlite "SELECT datetime(at/1000,'unixepoch','localtime'), outcome FROM tries WHERE proxy='HOST:PORT' ORDER BY at"`. State is shared on the same machine and home directory; separate machines do not coordinate their proxy usage automatically.
+The `tries` table in `~/.wideband/google-tries.sqlite` keeps one row per try for seven days: the time `at` in milliseconds, the `query`, the `attempt` number, the `outcome` (`ok`, `blocked`, `transport`, and so on), the exit `ip`, the `bytes`, the `proxy` as `host:port`, and the User-Agent `family` and `agent`. It holds no credentials. Google encodes the exit IP in its `/sorry` redirect, so `ip` is filled for blocked tries only. `bytes` counts the HTTP request and the compressed response as curl reports them. TLS and the proxy's CONNECT exchange come on top: in October 2026 an ok try read about 7.4 KB in `bytes` and measured 12 to 14 KB on the wire. Writing the history is best-effort and never fails a search. Count the last hour's tries and bytes with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT outcome, attempt, count(*), sum(bytes) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1, 2"`. Find worn-out agents with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT agent, count(*), round(100.0 * sum(outcome != 'ok') / count(*)) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1 ORDER BY 3 DESC"`.
 
 Cancellation kills the transport process group on macOS and Linux and waits for it to close. If a later page fails, earlier hits remain available with provider status `partial` and `complete: false`.
 
@@ -336,11 +354,11 @@ The provider supports English US web results. Search and research return the sam
 
 For a failed first search:
 
-- For an `inventory` error, check the file path, contents, and permissions first. Errors mentioning reservations point to the local SQLite scheduler or its filesystem access.
+- For an `inventory` error, check the file path, contents, and permissions first.
 - A `runtime` error means the subprocess could not start or complete. Run the uv dependency command above in the same environment.
-- An `exhausted` error lists each failed proxy attempt in order, such as `blocked, blocked, transport`. A final `unavailable` means no other connection became free in time. Check proxy authentication, IP allowlisting, exit reputation, and the provider's network access.
-- The ledger records each failed Google page as `google:<reason>` in `attempts.error_code`, such as `google:unavailable` or `google:blocked,transport`. Count recent reasons with `sqlite3 -readonly ~/.wideband/ledger.db "SELECT error_code, count(*) FROM attempts WHERE provider='google' AND status='error' GROUP BY 1 ORDER BY 2 DESC"`.
-- A timeout can mean all connections are cooling down. Wait or use a healthy pool; raising the overall timeout does not remove the page deadline.
+- An `exhausted` error lists each failed try in order, such as `blocked, blocked, transport`. Check proxy authentication, IP allowlisting, exit reputation, and the provider's network access.
+- The ledger records each failed Google page as `google:<reason>` in `attempts.error_code`, such as `google:inventory` or `google:blocked,transport,blocked`. Count recent reasons with `sqlite3 -readonly ~/.wideband/ledger.db "SELECT error_code, count(*) FROM attempts WHERE provider='google' AND status='error' GROUP BY 1 ORDER BY 2 DESC"`.
+- A timeout means the tries did not finish within the page deadline, usually because the gateway is slow. Raising the overall timeout does not remove the page deadline.
 - An `unrecognized` error means the HTML parser could not identify results or an explicit no-results page. Check the parser against the returned page format.
 
 Google's recorded search-API fee is zero. Proxy bandwidth and inventory costs are outside wideband's budget and cost totals.

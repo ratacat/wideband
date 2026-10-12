@@ -569,18 +569,17 @@ export class Engine {
           ),
         )
       const selected = this.state.adapters.filter((adapter) => requested.includes(adapter.name))
-      if (
-        query.googlePages !== undefined &&
-        !selected.some((adapter) => ['google', 'anyapi'].includes(adapter.name))
-      )
+      if (query.googlePages !== undefined && !selected.some((adapter) => adapter.capabilities.pages)) {
+        const paged = this.state.adapters.filter((adapter) => adapter.capabilities.pages).map((adapter) => adapter.name)
         return yield* Effect.fail(
           new WidebandError(
             'INVALID_ARGS',
-            'googlePages requires selecting the google or anyapi provider',
-            ['use --providers google or --providers anyapi'],
+            `googlePages requires selecting a paged provider: ${paged.join(', ')}`,
+            [`use --providers ${paged.join(' or --providers ')}`],
             2,
           ),
         )
+      }
       const providers = selected.map((adapter) => ({
         adapter,
         key: adapter.envKey ? (this.state.getKey(adapter.envKey) ?? '') : '',
