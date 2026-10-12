@@ -2,9 +2,9 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import type { Browser, CDPSession, Page } from 'patchright'
-import { browserFailures, proxyUrls, recordTry, stickyProxy } from '../google-search.mjs'
+import { browserFailures, proxyUrls, recordTry, SearchError, solveSorry, sorryForm, stickyProxy } from '../google-search.mjs'
 import { BROWSER_PORT, BrowserRequest, type BrowserReply } from './client'
 import { openRelay, type Relay } from './relay'
 import { parseSerp, type SerpResult } from './serp'
@@ -35,7 +35,8 @@ const NEXT: Record<SessionState, Record<Verdict, SessionState>> = {
   retired: { ok: 'retired', captcha: 'retired', forbidden: 'retired', enablejs: 'retired', unrecognized: 'retired', transport: 'retired', timeout: 'retired', crash: 'retired' },
 }
 
-type Session = { slot: number; state: SessionState; busy: boolean; nextAt: number; queries: number; missStreak: number; proxy: string; relay: Relay; browser: Browser; page: Page; cdp: CDPSession }
+type Session = { slot: number; state: SessionState; busy: boolean; nextAt: number; queries: number; missStreak: number; proxy: URL; relay: Relay; browser: Browser; page: Page; cdp: CDPSession }
+type Ask = { q: string; start: number; deadlineAt: number; solve: boolean; microUSD: number }
 type Pool = { sessions: Session[]; opening: number; nextOpenAt: number; waiters: Set<() => void>; lastRequestAt: number }
 type Served = { verdict: Verdict; page: { results: (SerpResult & { rank: number })[]; nextStart: number | null } | null }
 
@@ -59,7 +60,7 @@ async function openSession(pool: Pool): Promise<Session> {
     const cdp = await context.newCDPSession(page)
     await cdp.send('Network.enable')
     await cdp.send('Network.setBlockedURLs', { urls: BLOCKED_URLS })
-    const session: Session = { slot, state: 'starting', busy: true, nextAt: 0, queries: 0, missStreak: 0, proxy: proxy.host, relay, browser, page, cdp }
+    const session: Session = { slot, state: 'starting', busy: true, nextAt: 0, queries: 0, missStreak: 0, proxy, relay, browser, page, cdp }
     browser.on('disconnected', () => void retire(pool, session, 'crash'))
     log(`session ${slot} starting on chrome ${browser.version()}`)
     return session
@@ -137,16 +138,46 @@ function failure(session: Session, error: unknown): Verdict {
   return /net::ERR_(TUNNEL|PROXY|CONNECTION|EMPTY_RESPONSE|SOCKET)/.test(message) ? 'transport' : 'timeout'
 }
 
-async function search(pool: Pool, session: Session, query: string, start: number): Promise<Served> {
+async function solveCaptcha(session: Session, ask: Ask, html: string, layout: string): Promise<string> {
+  ask.solve = false
+  const startedAt = Date.now()
+  let outcome = 'solved'
+  try {
+    const form = sorryForm(html)
+    if (!form) throw new SearchError('solve', 'The captcha page has no form.', ['solve:form'])
+    const cookies = Object.fromEntries((await session.page.context().cookies('https://www.google.com')).map(cookie => [cookie.name, cookie.value]))
+    const solution = await Effect.runPromise(solveSorry({ pageUrl: session.page.url(), form, proxy: session.proxy.href, cookies }))
+    ask.microUSD += solution.microUSD
+    await session.page.locator('#captcha-form').evaluate((captcha, token) => {
+      const field = captcha.querySelector('[name="g-recaptcha-response"]') ?? captcha.appendChild(Object.assign(captcha.ownerDocument.createElement('textarea'), { name: 'g-recaptcha-response' }))
+      field.value = token
+      captcha.submit()
+    }, solution.token)
+    await session.page.waitForURL(url => !url.pathname.startsWith('/sorry/'), { timeout: NAVIGATION_MS, waitUntil: 'domcontentloaded' })
+  } catch (error) {
+    outcome = error instanceof SearchError ? error.failures[0] ?? 'solve:error' : 'solve:navigation'
+  }
+  ask.deadlineAt += Date.now() - startedAt
+  log(`session ${session.slot} ${outcome} in ${Date.now() - startedAt}ms`)
+  await recordTry({ route: 'browser', query: ask.q, attempt: session.queries + 1, outcome, ip: null, bytes: null, proxy: session.proxy.host, family: layout, agent: null, slot: session.slot }).catch(() => {})
+  return session.page.content()
+}
+
+async function search(pool: Pool, session: Session, ask: Ask): Promise<Served> {
   const before = session.relay.bytes()
   const startedAt = Date.now()
   const layout = session.state === 'starting' ? 'desktop' : 'mobile'
+  const { q: query, start } = ask
   const url = `https://www.google.com/search?${new URLSearchParams({ q: query, hl: 'en', gl: 'us', ...(start ? { start: String(start) } : {}) })}`
   let served: Served
   try {
     const response = await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_MS })
-    const html = await session.page.content()
-    const serp = response?.status() === 403 ? { verdict: 'forbidden' as const } : parseSerp(html, session.page.url(), start)
+    let html = await session.page.content()
+    let serp = response?.status() === 403 ? { verdict: 'forbidden' as const } : parseSerp(html, session.page.url(), start)
+    if (serp.verdict === 'captcha' && ask.solve) {
+      html = await solveCaptcha(session, ask, html, layout)
+      serp = parseSerp(html, session.page.url(), start)
+    }
     served = serp.verdict === 'ok'
       ? { verdict: 'ok', page: { results: serp.results.map((result, index) => ({ rank: start + index + 1, ...result })), nextStart: serp.nextStart } }
       : { verdict: serp.verdict === 'desktop' ? (layout === 'desktop' ? 'ok' : 'unrecognized') : serp.verdict, page: null }
@@ -160,7 +191,7 @@ async function search(pool: Pool, session: Session, query: string, start: number
   const previous = session.state
   session.state = session.missStreak >= MISS_STREAK_LIMIT ? 'retired' : NEXT[session.state][served.verdict]
   log(`session ${session.slot} query ${session.queries} ${layout} ${served.verdict} ${Date.now() - startedAt}ms ${Math.round((session.relay.bytes() - before) / 1024)}KB`)
-  await recordTry({ route: 'browser', query, attempt: session.queries, outcome: served.verdict, ip: null, bytes: session.relay.bytes() - before, proxy: session.proxy, family: layout, agent: null, slot: session.slot }).catch(() => {})
+  await recordTry({ route: 'browser', query, attempt: session.queries, outcome: served.verdict, ip: null, bytes: session.relay.bytes() - before, proxy: session.proxy.host, family: layout, agent: null, slot: session.slot }).catch(() => {})
   if (previous === 'starting' && session.state === 'warm') {
     log(`session ${session.slot} warm`)
     await useMobileLayout(session).catch(() => { session.state = 'retired' })
@@ -174,14 +205,15 @@ async function search(pool: Pool, session: Session, query: string, start: number
 }
 
 async function answer(pool: Pool, request: BrowserRequest, gone: () => boolean): Promise<BrowserReply> {
-  while (Date.now() < request.deadlineAt && !gone()) {
-    const session = await acquire(pool, request.deadlineAt)
-    if (session === 'busy' || session === 'capped') return { ok: false, code: session }
-    const served = await search(pool, session, request.q, request.start)
-    if (served.page) return { ok: true, ...served.page }
-    if (served.verdict === 'unrecognized') return { ok: false, code: 'unrecognized' }
+  const ask: Ask = { ...request, microUSD: 0 }
+  while (Date.now() < ask.deadlineAt && !gone()) {
+    const session = await acquire(pool, ask.deadlineAt)
+    if (session === 'busy' || session === 'capped') return { ok: false, code: session, microUSD: ask.microUSD }
+    const served = await search(pool, session, ask)
+    if (served.page) return { ok: true, ...served.page, microUSD: ask.microUSD }
+    if (served.verdict === 'unrecognized') return { ok: false, code: 'unrecognized', microUSD: ask.microUSD }
   }
-  return { ok: false, code: 'timeout' }
+  return { ok: false, code: 'timeout', microUSD: ask.microUSD }
 }
 
 function status(pool: Pool) {
