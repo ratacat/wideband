@@ -14,8 +14,7 @@ export class SearchError extends Error {
 }
 export function proxyUrls(): string[];
 export function recordTry(row: GoogleTry): Promise<void>;
-export type TryCounts = { httpTries: number; httpPassed: number; browserFailed: number };
-export function tryCounts(sinceMs: number): Promise<TryCounts>;
+export function browserFailures(sinceMs: number): Promise<number>;
 export function parseResults(html: string, start?: number): ParsedResults;
 export function createSearchEffect(): SearchEffect;
 export const searchEffect: SearchEffect;

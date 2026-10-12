@@ -242,6 +242,7 @@ export type AdapterCtx = {
 export interface ProviderAdapter {
   name: string
   envKey?: string
+  optIn?: boolean
   timeoutMs?: number
   capabilities: Capabilities
   costModel: CostModel

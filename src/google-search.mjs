@@ -193,14 +193,13 @@ export async function recordTry(row) {
   } finally { db.close(); }
 }
 
-export async function tryCounts(sinceMs) {
+export async function browserFailures(sinceMs) {
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(join(homedir(), '.wideband', 'google-tries.sqlite'));
   try {
-    const row = db.prepare("SELECT count(*) FILTER (WHERE route = 'http') AS httpTries, count(*) FILTER (WHERE route = 'http' AND outcome = 'ok') AS httpPassed, count(*) FILTER (WHERE route = 'browser' AND outcome != 'ok') AS browserFailed FROM tries WHERE at >= ?").get(Date.now() - sinceMs);
-    return { httpTries: Number(row.httpTries), httpPassed: Number(row.httpPassed), browserFailed: Number(row.browserFailed) };
+    return Number(db.prepare("SELECT count(*) AS failed FROM tries WHERE route = 'browser' AND outcome != 'ok' AND at >= ?").get(Date.now() - sinceMs).failed);
   } catch {
-    return { httpTries: 0, httpPassed: 0, browserFailed: 0 };
+    return 0;
   } finally { db.close(); }
 }
 

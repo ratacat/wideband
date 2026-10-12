@@ -4,8 +4,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Schema } from 'effect'
 import type { Browser, CDPSession, Page } from 'patchright'
-import { proxyUrls, recordTry, tryCounts } from '../google-search.mjs'
-import { BROWSER_PORT, BrowserRequest, type BrowserReply } from '../google-route'
+import { browserFailures, proxyUrls, recordTry } from '../google-search.mjs'
+import { BROWSER_PORT, BrowserRequest, type BrowserReply } from './client'
 import { openRelay, stickyProxy, type Relay } from './relay'
 import { parseSerp, type SerpResult } from './serp'
 
@@ -85,7 +85,7 @@ function wake(pool: Pool) {
 }
 
 async function capped(): Promise<boolean> {
-  return (await tryCounts(3_600_000)).browserFailed >= FAILED_TRIES_PER_HOUR
+  return await browserFailures(3_600_000) >= FAILED_TRIES_PER_HOUR
 }
 
 async function acquire(pool: Pool, deadlineAt: number): Promise<Session | 'busy' | 'capped'> {

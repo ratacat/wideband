@@ -555,7 +555,7 @@ export class Engine {
       })
       const requested = opts.providers?.length
         ? [...new Set(opts.providers.map((name) => name.toLowerCase()))]
-        : this.state.adapters.map((adapter) => adapter.name)
+        : this.state.adapters.filter((adapter) => !adapter.optIn).map((adapter) => adapter.name)
       const unknown = requested.filter(
         (name) => !this.state.adapters.some((adapter) => adapter.name === name),
       )
