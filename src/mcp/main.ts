@@ -19,7 +19,6 @@ const SearchArgs = Schema.Struct({
   q: UnifiedQuery.fields.q.annotate({ description: 'Search query' }),
   max: Schema.optionalKey(Schema.toType(UnifiedQuery.fields.max)).annotate({ description: 'Max results per provider, default 10 or 10 per requested Google page' }),
   googlePages: UnifiedQuery.fields.googlePages.annotate({ description: 'Google page limit, default 1. Google is included unless providers excludes it.' }),
-  googleSolve: UnifiedQuery.fields.googleSolve.annotate({ description: 'Pay 2captcha about $0.003 to clear a blocked Google page. Needs WIDEBAND_2CAPTCHA_KEY.' }),
   providers: SweepOptionsSchema.fields.providers.annotate({ description: 'Restrict the sweep to these provider names' }),
   budget: SweepOptionsSchema.fields.budget.annotate({ description: 'USD cap on modeled request charges; cheapest providers first' }),
   hours: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThan(0))).annotate({ description: 'Only content published within the last N hours' }),
@@ -51,7 +50,6 @@ async function callTool(name: string, args: unknown, signal: AbortSignal): Promi
     q: input.q,
     ...(input.max !== undefined ? { max: input.max } : input.googlePages !== undefined ? { max: input.googlePages * 10 } : {}),
     ...(input.googlePages !== undefined ? { googlePages: input.googlePages } : {}),
-    ...(input.googleSolve !== undefined ? { googleSolve: input.googleSolve } : {}),
     ...(input.hours !== undefined ? { freshness: { after: new Date(Date.now() - input.hours * 3_600_000).toISOString() } } : {}),
   }
   const options = {

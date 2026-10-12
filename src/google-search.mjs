@@ -34,7 +34,6 @@ const SOLVER_URL = 'https://api.2captcha.com';
 const SOLVE_POLL_MS = 5_000;
 const SOLVE_FROM_TRY = 2;
 export const SOLVE_TIMEOUT_MS = 120_000;
-export const SOLVE_MICRO_USD_MAX = 3_000;
 const FAMILIES = new Map(families.map(({ family, headers }) => [family, headers]));
 const AGENTS = families.flatMap(({ family, agents }) => agents.map(agent => ({ family, agent })));
 
@@ -330,11 +329,10 @@ function clearSorry(blocked, slot, proxy, headers) {
 }
 
 export function createSearchEffect() {
-  return function searchEffect(query, start = 0, options = {}) {
+  return function searchEffect(query, start = 0) {
     return Effect.suspend(() => {
       const failures = [];
       let microUSD = 0;
-      let solve = options.solve === true;
       return Effect.gen(function* () {
         const proxies = yield* Effect.try({
           try: () => {
@@ -370,24 +368,14 @@ export function createSearchEffect() {
             yield* Effect.tryPromise(() => outcome === 'ok' || outcome === 'unrecognized' ? keep(slot, { ...slot.cookies, ...page.cookies }, Date.now()) : drop(slot)).pipe(Effect.ignore);
             return { page, parsed, outcome };
           });
-          let { page, parsed, outcome } = yield* fetchSearch;
-          if (outcome === 'blocked' && solve && attempt >= SOLVE_FROM_TRY) {
-            solve = false;
-            const cleared = yield* Effect.result(clearSorry(page, slot, proxy, headers));
-            microUSD += cleared._tag === 'Success' ? cleared.success.microUSD : cleared.failure.microUSD;
-            yield* record(cleared._tag === 'Success' ? 'solved' : cleared.failure.failures[0]);
-            if (cleared._tag === 'Success') {
-              slot.cookies = cleared.success.cookies;
-              ({ parsed, outcome } = yield* fetchSearch);
-            }
-          }
+          const { parsed, outcome } = yield* fetchSearch;
           if (parsed._tag === 'Success') return { ...parsed.success, microUSD };
           if (!(parsed.failure instanceof SearchError) || outcome === 'unrecognized') return yield* Effect.fail(parsed.failure);
         }
         return yield* Effect.fail(new SearchError('exhausted', `Every Google try failed: ${failures.join(', ')}.`, failures));
       }).pipe(
         Effect.timeoutOrElse({
-          duration: options.solve === true ? PAGE_TIMEOUT_MS + SOLVE_TIMEOUT_MS : PAGE_TIMEOUT_MS,
+          duration: PAGE_TIMEOUT_MS,
           orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
         }),
         Effect.mapError(error => error instanceof SearchError ? new SearchError(error.code, error.message, error.failures, microUSD) : error),
@@ -398,7 +386,7 @@ export function createSearchEffect() {
 
 export function createSearch() {
   const run = createSearchEffect();
-  return (query, start = 0, options = {}) => Effect.runPromise(run(query, start, options), { signal: options.signal });
+  return (query, start = 0, options = {}) => Effect.runPromise(run(query, start), { signal: options.signal });
 }
 
 export const searchEffect = createSearchEffect();

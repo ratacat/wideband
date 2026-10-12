@@ -36,7 +36,7 @@ const NEXT: Record<SessionState, Record<Verdict, SessionState>> = {
 }
 
 type Session = { slot: number; state: SessionState; busy: boolean; nextAt: number; queries: number; missStreak: number; proxy: URL; relay: Relay; browser: Browser; page: Page; cdp: CDPSession }
-type Ask = { q: string; start: number; deadlineAt: number; solve: boolean; microUSD: number }
+type Ask = { q: string; start: number; deadlineAt: number; microUSD: number }
 type Pool = { sessions: Session[]; opening: number; nextOpenAt: number; waiters: Set<() => void>; lastRequestAt: number }
 type Served = { verdict: Verdict; page: { results: (SerpResult & { rank: number })[]; nextStart: number | null } | null }
 
@@ -139,7 +139,6 @@ function failure(session: Session, error: unknown): Verdict {
 }
 
 async function solveCaptcha(session: Session, ask: Ask, html: string, layout: string): Promise<string> {
-  ask.solve = false
   const startedAt = Date.now()
   let outcome = 'solved'
   try {
@@ -174,10 +173,6 @@ async function search(pool: Pool, session: Session, ask: Ask): Promise<Served> {
     const response = await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_MS })
     let html = await session.page.content()
     let serp = response?.status() === 403 ? { verdict: 'forbidden' as const } : parseSerp(html, session.page.url(), start)
-    if (serp.verdict === 'captcha' && ask.solve) {
-      html = await solveCaptcha(session, ask, html, layout)
-      serp = parseSerp(html, session.page.url(), start)
-    }
     served = serp.verdict === 'ok'
       ? { verdict: 'ok', page: { results: serp.results.map((result, index) => ({ rank: start + index + 1, ...result })), nextStart: serp.nextStart } }
       : { verdict: serp.verdict === 'desktop' ? (layout === 'desktop' ? 'ok' : 'unrecognized') : serp.verdict, page: null }
