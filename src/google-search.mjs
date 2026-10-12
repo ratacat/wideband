@@ -110,7 +110,8 @@ export function parseResults(html, start = 0) {
     if (Number.isSafeInteger(next) && next > start && (nextStart === null || next < nextStart)) nextStart = next;
   }
   if (!results.length) {
-    if (/did not match any documents|No results found for/i.test(text)) return { results, nextStart: null };
+    const area = $('.muO3cf').next();
+    if (area.length && !clean(area.text())) return { results, nextStart: null };
     if (/enable javascript|not redirected within a few seconds|trouble accessing Google Search|Verifying your request/i.test(text)) {
       throw new SearchError('challenge', 'Google returned a JavaScript challenge.');
     }

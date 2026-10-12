@@ -310,7 +310,7 @@ Each new slot picks a random User-Agent from [google-agents.json](src/google-age
 
 `curl_cffi` supplies the `chrome99_android` TLS profile, with its default Chrome headers turned off. Google's block followed the User-Agent string, not the TLS profile: in the same test, five TLS profiles gave the same outcome. [curl_cffi's browser impersonation documentation](https://github.com/lexiforest/curl_cffi#features).
 
-Cheerio extracts organic result cards, titles, snippets, and next-page offsets. The parser unwraps Google redirect links; the adapter canonicalizes URLs and removes duplicates. This depends on Google's current page format. CAPTCHA, consent, JavaScript challenges, and unrecognized markup produce errors rather than successful empty results. This is an HTML integration, not a documented Google search API.
+Cheerio extracts organic result cards, titles, snippets, and next-page offsets. The parser unwraps Google redirect links; the adapter canonicalizes URLs and removes duplicates. This depends on Google's current page format. An empty result is a page whose search header is present and whose results area has no text. Google prints no "did not match" message on this layout. CAPTCHA, consent, JavaScript challenges, and unrecognized markup produce errors rather than successful empty results. This is an HTML integration, not a documented Google search API.
 
 #### Direct IP versus proxies
 
@@ -381,7 +381,8 @@ For a failed first search:
 - An `exhausted` error lists each failed try in order, such as `blocked, blocked, transport`. Check proxy authentication, IP allowlisting, exit reputation, and the provider's network access.
 - The ledger records each failed Google page as `google:<reason>` in `attempts.error_code`, such as `google:inventory` or `google:blocked,transport,blocked`. Count recent reasons with `sqlite3 -readonly ~/.wideband/ledger.db "SELECT error_code, count(*) FROM attempts WHERE provider='google' AND status='error' GROUP BY 1 ORDER BY 2 DESC"`.
 - A timeout means the tries did not finish within the page deadline, usually because the gateway is slow. Raising the overall timeout does not remove the page deadline.
-- An `unrecognized` error means the HTML parser could not identify results or an explicit no-results page. Check the parser against the returned page format.
+- An `unrecognized` error means the HTML parser could not identify results or Google's empty results page. Check the parser against the returned page format.
+- A sudden rise in empty Google pages can be a quiet block. Count them with `sqlite3 -readonly ~/.wideband/ledger.db "SELECT c.status, sum(c.hits = 0), count(*) FROM calls c JOIN sweeps s ON s.id = c.sweep_id WHERE c.provider = 'google' AND s.ts >= strftime('%s', 'now', '-1 hour') * 1000 GROUP BY 1"`.
 
 Google's recorded search-API fee is zero. Proxy bandwidth and inventory costs are outside wideband's budget and cost totals. 2captcha charges are inside those totals.
 
