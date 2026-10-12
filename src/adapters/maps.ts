@@ -129,7 +129,7 @@ function classify(fetched: Fetched | undefined): { outcome: Exclude<Outcome, 'ok
 }
 
 function record(query: string, attempt: number, outcome: string, bytes: number | null, proxy: string) {
-  return Effect.tryPromise(() => recordTry({ route: 'maps', query, attempt, outcome, ip: null, bytes, proxy: new URL(proxy).host, family: null, agent: null })).pipe(Effect.ignore)
+  return Effect.tryPromise(() => recordTry({ route: 'maps', query, attempt, outcome, ip: null, bytes, proxy: new URL(proxy).host, family: null, agent: null, slot: null })).pipe(Effect.ignore)
 }
 
 function refreshTemplate(query: string, proxy: string, attempt: number): Effect.Effect<string | undefined> {

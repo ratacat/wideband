@@ -5,12 +5,6 @@ const GOOGLE_HOSTS = /^(www\.google\.com|google\.com|consent\.google\.com|www\.g
 
 export type Relay = { url: string; bytes: () => number; close: () => Promise<void> }
 
-export function stickyProxy(proxy: string, slot: number): URL {
-  const url = new URL(proxy)
-  if (url.username.endsWith('-rotate')) url.username = `${url.username.slice(0, -'-rotate'.length)}-${slot}`
-  return url
-}
-
 export function openRelay(upstream: URL): Promise<Relay> {
   const auth = upstream.username ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(upstream.username)}:${decodeURIComponent(upstream.password)}`).toString('base64')}\r\n` : ''
   const sockets = new Set<Socket>()

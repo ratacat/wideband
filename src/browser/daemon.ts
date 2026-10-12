@@ -4,9 +4,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Schema } from 'effect'
 import type { Browser, CDPSession, Page } from 'patchright'
-import { browserFailures, proxyUrls, recordTry } from '../google-search.mjs'
+import { browserFailures, proxyUrls, recordTry, stickyProxy } from '../google-search.mjs'
 import { BROWSER_PORT, BrowserRequest, type BrowserReply } from './client'
-import { openRelay, stickyProxy, type Relay } from './relay'
+import { openRelay, type Relay } from './relay'
 import { parseSerp, type SerpResult } from './serp'
 
 const MAX_SESSIONS = 2
@@ -45,9 +45,9 @@ const log = (message: string) => console.log(`${new Date().toISOString()} ${mess
 async function openSession(pool: Pool): Promise<Session> {
   const proxies = proxyUrls()
   const taken = new Set(pool.sessions.map(session => session.slot))
-  let slot = 10_000 + Math.floor(Math.random() * 90_000)
-  while (taken.has(slot)) slot = 10_000 + Math.floor(Math.random() * 90_000)
-  const proxy = stickyProxy(proxies[Math.floor(Math.random() * proxies.length)]!, slot)
+  let slot = 10_000 + Math.floor(Math.random() * 40_000)
+  while (taken.has(slot)) slot = 10_000 + Math.floor(Math.random() * 40_000)
+  const proxy = new URL(stickyProxy(proxies[slot % proxies.length]!, slot))
   const relay = await openRelay(proxy)
   let browser: Browser | undefined
   try {
@@ -160,7 +160,7 @@ async function search(pool: Pool, session: Session, query: string, start: number
   const previous = session.state
   session.state = session.missStreak >= MISS_STREAK_LIMIT ? 'retired' : NEXT[session.state][served.verdict]
   log(`session ${session.slot} query ${session.queries} ${layout} ${served.verdict} ${Date.now() - startedAt}ms ${Math.round((session.relay.bytes() - before) / 1024)}KB`)
-  await recordTry({ route: 'browser', query, attempt: session.queries, outcome: served.verdict, ip: null, bytes: session.relay.bytes() - before, proxy: session.proxy, family: layout, agent: `slot ${session.slot}` }).catch(() => {})
+  await recordTry({ route: 'browser', query, attempt: session.queries, outcome: served.verdict, ip: null, bytes: session.relay.bytes() - before, proxy: session.proxy, family: layout, agent: null, slot: session.slot }).catch(() => {})
   if (previous === 'starting' && session.state === 'warm') {
     log(`session ${session.slot} warm`)
     await useMobileLayout(session).catch(() => { session.state = 'retired' })

@@ -4,7 +4,7 @@ export type ParsedResults = { results: GoogleResult[]; nextStart: number | null 
 export type GooglePage = ParsedResults & { query: string; start: number };
 export type SearchOptions = { signal?: AbortSignal };
 export type GoogleRoute = 'http' | 'maps' | 'browser';
-export type GoogleTry = { route: GoogleRoute; query: string; attempt: number; outcome: string; ip: string | null; bytes: number | null; proxy: string; family: string | null; agent: string | null };
+export type GoogleTry = { route: GoogleRoute; query: string; attempt: number; outcome: string; ip: string | null; bytes: number | null; proxy: string; family: string | null; agent: string | null; slot: number | null };
 export type Search = (query: string, start?: number, options?: SearchOptions) => Promise<GooglePage>;
 export type SearchEffect = (query: string, start?: number) => Effect.Effect<GooglePage, SearchError | TypeError>;
 export class SearchError extends Error {
@@ -13,6 +13,7 @@ export class SearchError extends Error {
   constructor(code: string, message: string, failures?: readonly string[]);
 }
 export function proxyUrls(): string[];
+export function stickyProxy(proxy: string, slot: number): string;
 export function recordTry(row: GoogleTry): Promise<void>;
 export function browserFailures(sinceMs: number): Promise<number>;
 export function parseResults(html: string, start?: number): ParsedResults;

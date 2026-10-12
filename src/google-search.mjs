@@ -13,21 +13,27 @@ try:
     response = requests.get(
         "https://www.google.com/search",
         params={"q": data["query"], "start": data["start"], "hl": "en", "gl": "us", "pws": "0", "sca_esv": "1", "gbv": "1"},
-        headers=data["headers"], default_headers=False, http_version="v1",
+        headers=data["headers"], cookies=data["cookies"], default_headers=False, http_version="v1",
         proxy=data["proxy"], impersonate="chrome99_android", timeout=20, allow_redirects=False,
     )
-    print(json.dumps({"status": response.status_code, "location": response.headers.get("location", ""), "html": response.text, "bytes": response.request_size + response.header_size + response.download_size}))
+    print(json.dumps({"status": response.status_code, "location": response.headers.get("location", ""), "html": response.text, "bytes": response.request_size + response.header_size + response.download_size, "cookies": {cookie.name: cookie.value for cookie in response.cookies.jar}}))
 except requests.exceptions.RequestException:
     print(json.dumps({"error": "transport"}))
 `;
 
-const ATTEMPTS = 3;
+const ATTEMPTS = 5;
 const PAGE_TIMEOUT_MS = 75_000;
 const TRY_HISTORY_MS = 604_800_000;
-const AGENTS = families.flatMap(({ family, headers, agents }) => agents.map(agent => ({ family, agent, headers: { ...headers, 'User-Agent': agent } })));
+const PACE_MS = 12_000;
+const LEASE_MS = 30_000;
+const SLOT_IDLE_MS = 1_800_000;
+const FIRST_HTTP_SLOT = 50_000;
+const HTTP_SLOTS = 50_000;
+const FAMILIES = new Map(families.map(({ family, headers }) => [family, headers]));
+const AGENTS = families.flatMap(({ family, agents }) => agents.map(agent => ({ family, agent })));
 
 const Response = Schema.Union([
-  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), location: Schema.String, html: Schema.String, bytes: Schema.Finite.check(Schema.isInt()) }),
+  Schema.Struct({ status: Schema.Finite.check(Schema.isInt()), location: Schema.String, html: Schema.String, bytes: Schema.Finite.check(Schema.isInt()), cookies: Schema.Record(Schema.String, Schema.String) }),
   Schema.Struct({ error: Schema.Literal('transport') }),
 ]);
 const decodeResponse = Schema.decodeUnknownSync(Response);
@@ -180,27 +186,57 @@ function exitIp(location = '') {
   return bytes[0] === 0x12 && bytes[1] === 4 ? bytes.subarray(2, 6).join('.') : null;
 }
 
-export async function recordTry(row) {
+export function stickyProxy(proxy, slot) {
+  return proxy.replace(/^([^:/]+:\/\/[^:@/]*)-rotate(?=(?::[^@/]*)?@)/, `$1-${slot}`);
+}
+
+async function withStore(run) {
   const { DatabaseSync } = await import('node:sqlite');
   const directory = join(homedir(), '.wideband');
   mkdirSync(directory, { recursive: true });
   const db = new DatabaseSync(join(directory, 'google-tries.sqlite'));
   try {
-    db.exec("PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS tries (at INTEGER NOT NULL, query TEXT NOT NULL, attempt INTEGER NOT NULL, outcome TEXT NOT NULL, ip TEXT, bytes INTEGER, proxy TEXT NOT NULL, family TEXT, agent TEXT, route TEXT NOT NULL DEFAULT 'http'); CREATE INDEX IF NOT EXISTS tries_at ON tries (at)");
-    if (!db.prepare('PRAGMA table_info(tries)').all().some(column => column.name === 'route')) db.exec("ALTER TABLE tries ADD COLUMN route TEXT NOT NULL DEFAULT 'http'");
-    db.prepare('INSERT INTO tries (at, route, query, attempt, outcome, ip, bytes, proxy, family, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(Date.now(), row.route, row.query, row.attempt, row.outcome, row.ip, row.bytes, row.proxy, row.family, row.agent);
-    db.prepare('DELETE FROM tries WHERE at < ?').run(Date.now() - TRY_HISTORY_MS);
+    db.exec("PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS tries (at INTEGER NOT NULL, query TEXT NOT NULL, attempt INTEGER NOT NULL, outcome TEXT NOT NULL, ip TEXT, bytes INTEGER, proxy TEXT NOT NULL, family TEXT, agent TEXT, route TEXT NOT NULL DEFAULT 'http', slot INTEGER); CREATE INDEX IF NOT EXISTS tries_at ON tries (at); CREATE TABLE IF NOT EXISTS slots (slot INTEGER PRIMARY KEY, family TEXT NOT NULL, agent TEXT NOT NULL, cookies TEXT NOT NULL, next_at INTEGER NOT NULL, lease_until INTEGER NOT NULL, queries INTEGER NOT NULL, used_at INTEGER NOT NULL)");
+    const columns = new Set(db.prepare('PRAGMA table_info(tries)').all().map(column => column.name));
+    if (!columns.has('route')) db.exec("ALTER TABLE tries ADD COLUMN route TEXT NOT NULL DEFAULT 'http'");
+    if (!columns.has('slot')) db.exec('ALTER TABLE tries ADD COLUMN slot INTEGER');
+    return run(db);
   } finally { db.close(); }
 }
 
-export async function browserFailures(sinceMs) {
-  const { DatabaseSync } = await import('node:sqlite');
-  const db = new DatabaseSync(join(homedir(), '.wideband', 'google-tries.sqlite'));
-  try {
-    return Number(db.prepare("SELECT count(*) AS failed FROM tries WHERE route = 'browser' AND outcome != 'ok' AND at >= ?").get(Date.now() - sinceMs).failed);
-  } catch {
-    return 0;
-  } finally { db.close(); }
+export function recordTry(row) {
+  return withStore(db => {
+    db.prepare('INSERT INTO tries (at, route, query, attempt, outcome, ip, bytes, proxy, family, agent, slot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(Date.now(), row.route, row.query, row.attempt, row.outcome, row.ip, row.bytes, row.proxy, row.family, row.agent, row.slot);
+    db.prepare('DELETE FROM tries WHERE at < ?').run(Date.now() - TRY_HISTORY_MS);
+  });
+}
+
+export function browserFailures(sinceMs) {
+  return withStore(db => Number(db.prepare("SELECT count(*) AS failed FROM tries WHERE route = 'browser' AND outcome != 'ok' AND at >= ?").get(Date.now() - sinceMs).failed)).catch(() => 0);
+}
+
+function freshSlot(taken) {
+  let slot;
+  do slot = FIRST_HTTP_SLOT + Math.floor(Math.random() * HTTP_SLOTS); while (taken.has(slot));
+  const { family, agent } = AGENTS[Math.floor(Math.random() * AGENTS.length)];
+  return { slot, family, agent, cookies: {}, queries: 0 };
+}
+
+function lease(now) {
+  return withStore(db => {
+    db.prepare('DELETE FROM slots WHERE used_at < ?').run(now - SLOT_IDLE_MS);
+    const warm = db.prepare('UPDATE slots SET lease_until = ? WHERE slot = (SELECT slot FROM slots WHERE lease_until <= ? AND next_at <= ? ORDER BY next_at LIMIT 1) RETURNING slot, family, agent, cookies, queries').get(now + LEASE_MS, now, now);
+    if (warm) return { ...warm, cookies: JSON.parse(warm.cookies) };
+    return freshSlot(new Set(db.prepare('SELECT slot FROM slots').all().map(row => row.slot)));
+  });
+}
+
+function keep(slot, cookies, now) {
+  return withStore(db => db.prepare('INSERT INTO slots (slot, family, agent, cookies, next_at, lease_until, queries, used_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT (slot) DO UPDATE SET cookies = excluded.cookies, next_at = excluded.next_at, lease_until = 0, queries = excluded.queries, used_at = excluded.used_at').run(slot.slot, slot.family, slot.agent, JSON.stringify(cookies), now + PACE_MS, slot.queries + 1, now));
+}
+
+function drop(slot) {
+  return withStore(db => db.prepare('DELETE FROM slots WHERE slot = ?').run(slot.slot));
 }
 
 export function createSearchEffect() {
@@ -218,9 +254,9 @@ export function createSearchEffect() {
       });
       const failures = [];
       for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-        const proxy = proxies[Math.floor(Math.random() * proxies.length)];
-        const { family, agent, headers } = AGENTS[Math.floor(Math.random() * AGENTS.length)];
-        const page = yield* fetchPage({ query, start, proxy, headers });
+        const slot = yield* Effect.tryPromise(() => lease(Date.now())).pipe(Effect.orElseSucceed(() => freshSlot(new Set())));
+        const proxy = stickyProxy(proxies[slot.slot % proxies.length], slot.slot);
+        const page = yield* fetchPage({ query, start, proxy, headers: { ...FAMILIES.get(slot.family), 'User-Agent': slot.agent }, cookies: slot.cookies });
         const parsed = yield* Effect.result(Effect.try({
           try: () => {
             if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
@@ -232,7 +268,8 @@ export function createSearchEffect() {
         }));
         const error = parsed._tag === 'Failure' ? parsed.failure : undefined;
         const outcome = error ? error.code ?? 'error' : 'ok';
-        yield* Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family, agent })).pipe(Effect.ignore);
+        yield* Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family: slot.family, agent: slot.agent, slot: slot.slot })).pipe(Effect.ignore);
+        yield* Effect.tryPromise(() => !error || outcome === 'unrecognized' ? keep(slot, { ...slot.cookies, ...page.cookies }, Date.now()) : drop(slot)).pipe(Effect.ignore);
         if (!error) return parsed.success;
         if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
         failures.push(error.code);
