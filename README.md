@@ -77,6 +77,7 @@ Key flags:
 - `--providers a,b,c` — restrict the fan-out
 - `--max N` — per-provider hit limit, 1–100; providers can return fewer
 - `--google-pages N` — Google, Google browser, AnyAPI, or Maps page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include one of them
+- `--google-solve` — let `google` or `google-browser` pay 2captcha about $0.003 to clear a blocked page; needs `WIDEBAND_2CAPTCHA_KEY` (see [Clear blocked pages with 2captcha](#clear-blocked-pages-with-2captcha))
 - `--budget USD` — cap on request reservations, including retries and pages; see the cost model below
 - `--timeout MS` — provider deadline including queue waits, requests, and retries
 - `--stream` — provider snapshots and the final result as NDJSON
@@ -104,7 +105,7 @@ Exit codes: `0` ok · `1` no results · `2` bad args · `3` config · `4` budget
 }
 ```
 
-Provider keys come from the server process environment or the shell that launches the client. Tool arguments include `q`, `max`, `googlePages`, `providers`, `budget`, and `hours`. MCP request cancellation reaches provider work. EOF waits for accepted requests; SIGTERM cancels them and waits for cleanup.
+Provider keys come from the server process environment or the shell that launches the client. Tool arguments include `q`, `max`, `googlePages`, `googleSolve`, `providers`, `budget`, and `hours`. MCP request cancellation reaches provider work. EOF waits for accepted requests; SIGTERM cancels them and waits for cleanup.
 
 ## SDK
 
@@ -216,8 +217,8 @@ As configured in the adapters (modeled estimate; provider-reported dollars overr
 | Perplexity | $0.005/req | signup credits |
 | Nimble | $0.005/req | trial workspace |
 | anyapi | $0.0005/page base; reserve up to $0.0009 for automatic fallback | provider reports the charge |
-| Google | $0/req; you pay for the proxies | your proxy plan |
-| Google browser | $0/req; you pay for the proxies | your proxy plan |
+| Google | $0/req; you pay for the proxies; `--google-solve` adds about $0.003 per solved page | your proxy plan |
+| Google browser | $0/req; you pay for the proxies; `--google-solve` adds about $0.003 per solved page | your proxy plan |
 | Maps | $0/req; you pay for the proxies, about 36 KB per page | your proxy plan |
 
 Prices are modeled estimates, not account invoices. Free-tier models assume the allowance applies. `--budget` limits reservations before each attempt. A reported amount replaces its reservation. A lost response retains the reserved estimate and increments `unknownAttempts`; it does not silently become free. Actual provider charges can differ from a stale model, and cancellation cannot undo a dispatched request.
@@ -302,7 +303,7 @@ Credentials in these separate fields are URL-encoded by wideband. Complete URLs 
 
 #### How and why it works
 
-The transport in [google-search.mjs](src/google-search.mjs) starts `uv`, which runs Python with pinned `curl_cffi==0.16.3`. It passes the query, page offset, proxy connection, headers, and the slot's cookies through stdin, then receives the response and its new cookies as JSON.
+The transport in [google-search.mjs](src/google-search.mjs) starts `uv`, which runs Python with pinned `curl_cffi==0.16.3`. It passes one request through stdin: the method, URL, query parameters or form, headers, the slot's cookies, and the proxy. It receives the response and the cookies it set as JSON.
 
 The request targets Google's `/search` endpoint with `gbv=1` and an old feature-phone User-Agent. That combination returns compact HTML containing the search results without requiring a JavaScript browser. A results page is about 5.5 KB gzip-compressed. The request fixes `hl=en`, `gl=us`, and `pws=0`. As of October 2026, Google answers `/wml/search` with HTTP 403.
 
@@ -334,12 +335,32 @@ A page makes at most five tries. Each try leases a warm slot or makes a fresh on
 
 - A block, a transport failure, or another non-200 response deletes the slot, is recorded, and is retried at once. A block is a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, a consent page, a JavaScript challenge, or the `unsupported` page Google shows a User-Agent it no longer serves.
 - Unrecognized markup stops the search so a parser change cannot be hidden by repeated tries. The slot stays warm.
-- Each try has a 20-second network timeout, and each page has a 75-second deadline.
-- Google has a 120-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
+- Each try has a 20-second network timeout, and each page has a 75-second deadline, or 195 seconds with `--google-solve`.
+- Google has a 240-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
 
 The `tries` table in `~/.wideband/google-tries.sqlite` keeps one row per try for seven days: the time `at` in milliseconds, the `query`, the `attempt` number, the `outcome` (`ok`, `blocked`, `transport`, and so on), the exit `ip`, the `bytes`, the `proxy` as `host:port`, the User-Agent `family` and `agent`, and the `slot`. It holds no credentials. Google encodes the exit IP in its `/sorry` redirect, so `ip` is filled for blocked tries only. `bytes` counts the HTTP request and the compressed response as curl reports them. TLS and the proxy's CONNECT exchange come on top: in October 2026 an ok try read about 7.4 KB in `bytes` and measured 12 to 14 KB on the wire. Writing the history is best-effort and never fails a search. Count the last hour's tries and bytes with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT outcome, attempt, count(*), sum(bytes) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1, 2"`. Find worn-out agents with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT agent, count(*), round(100.0 * sum(outcome != 'ok') / count(*)) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1 ORDER BY 3 DESC"`.
 
 Cancellation kills the transport process group on macOS and Linux and waits for it to close. If a later page fails, earlier hits remain available with provider status `partial` and `complete: false`.
+
+#### Clear blocked pages with 2captcha
+
+In an hour when Google blocks most fresh exit IPs, a page can fail after five blocked tries. With `--google-solve`, the page pays [2captcha](https://2captcha.com) about $0.003 to clear one blocked slot, and that slot stays warm for later searches. Use it when `google` keeps failing with `blocked` and the results are worth the cost. Without the flag, nothing changes.
+
+Put a 2captcha API key in `WIDEBAND_2CAPTCHA_KEY`, in your environment or in the package's `.env`:
+
+```sh
+export WIDEBAND_2CAPTCHA_KEY=...
+wideband scan "live music Ogden UT" --providers google --google-solve
+```
+
+- A page solves at most once, and only when its second or later try is blocked. A block on the first try is usually followed by a fresh slot that passes.
+- A solve took 19 to 33 seconds in tests. The page deadline grows from 75 to 195 seconds.
+- 2captcha reports the charge, and the ledger records it as an observed cost, so `wideband costs` and `wideband stats` include it. Each page reserves $0.003 against `--budget`, and a page that did not solve records $0.
+- The flag needs a selected `google` or `google-browser` provider and the key. Without either, the CLI exits with code 2.
+- `google-browser` accepts the same flag and submits the token in the page.
+- The `tries` table records each solve with outcome `solved` or `solve:<code>`, such as `solve:timeout`.
+
+In an October 12, 2026 test, a page whose first two tries were blocked solved in 19 seconds for $0.00299 and returned results after 24 seconds. Its slot then served 10 of 10 searches. SDK and MCP callers set `googleSolve: true` in the query.
 
 #### Pagination and troubleshooting
 
@@ -362,7 +383,7 @@ For a failed first search:
 - A timeout means the tries did not finish within the page deadline, usually because the gateway is slow. Raising the overall timeout does not remove the page deadline.
 - An `unrecognized` error means the HTML parser could not identify results or an explicit no-results page. Check the parser against the returned page format.
 
-Google's recorded search-API fee is zero. Proxy bandwidth and inventory costs are outside wideband's budget and cost totals.
+Google's recorded search-API fee is zero. Proxy bandwidth and inventory costs are outside wideband's budget and cost totals. The 2captcha charges for captcha solves are inside those totals.
 
 SDK calls use `scan({ q: 'dive shops', googlePages: 3, max: 30 }, { providers: ['google'] })`. MCP `scan` and `research` accept `googlePages` and derive the default `max` from it. The standalone parser and page client are exported from `wideband/google-search` and run on Node 22.16 or newer.
 
@@ -378,6 +399,8 @@ The pool needs installed Google Chrome and the optional `patchright` package. Th
 wideband scan "live music Ogden UT" --providers google-browser
 ```
 
+With `--google-solve`, a request that gets a captcha pays 2captcha once to clear it, and the session stays warm. A new session's first query usually gets the captcha. In an October 12, 2026 test, such a request returned results after 43 seconds.
+
 ### Google through AnyAPI
 
 The `anyapi` provider returns Google results through the [anyapi](https://getanyapi.com) `google.search` API, with no local proxies, uv, or Python. Its published base price is $0.0005 per page, and default automatic fallback can cost up to $0.0009. Each attempt reserves that upper bound and then records the reported amount. It reads its key from `ANYAPI_API_KEY`, or else from `~/.anyapi/config.json`. `--google-pages` sets its page count.
@@ -392,6 +415,7 @@ Page depth participates in cache keys. Other providers retain their own result c
 | anyapi | `ANYAPI_API_KEY`, or `~/.anyapi/config.json` |
 | Google | `WIDEBAND_PROXY_FILE` |
 | Google browser | `WIDEBAND_PROXY_FILE`, Google Chrome, and `patchright` |
+| Google captcha solving (`--google-solve`) | `WIDEBAND_2CAPTCHA_KEY` |
 | Jina | `JINA_API_KEY` |
 | Linkup | `LINKUP_API_KEY` |
 | Nimble | `NIMBLE_API_KEY` |

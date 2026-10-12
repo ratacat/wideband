@@ -43,7 +43,7 @@ flowchart LR
 - `src/core/merge.ts`, `freshness.ts`, and `cost.ts` contain pure domain operations.
 - `src/adapters/http.ts` reads responses, extracts reported cost independently, and validates the response schema.
 - `src/adapters/*.ts` define provider capabilities, estimates, request parameters, and normalization.
-- `src/google-search.mjs` owns Google HTML parsing, the proxy inventory, the slot store, the try history, and the subprocess transport.
+- `src/google-search.mjs` owns Google HTML parsing, the proxy inventory, the slot store, the try history, the subprocess transport, and the captcha solve.
 - `src/browser/` owns the Chrome pool: `client.ts` asks the daemon, `daemon.ts` runs the sessions, `relay.ts` forwards their proxy traffic, and `serp.ts` parses their pages.
 - `src/adapters/maps.ts` owns the Maps place model, its field-path table, the request template, and paging.
 - `src/cli/main.ts` and `src/mcp/main.ts` adapt the SDK to their wire protocols.
@@ -60,7 +60,7 @@ The engine handles recoverable `AdapterError` values independently for each prov
 
 A semaphore permits one active request per provider within an Engine. Genuine rate limits update shared pacing from `Retry-After`. Quota and authentication errors neither retry nor update rate-limit pacing.
 
-Rate-limit and transient server responses may retry once. A lost response leaves uncertain billing and does not automatically repeat potentially charged work. Google keeps its bounded tries within a zero-search-fee page and disables an additional engine retry.
+Rate-limit and transient server responses may retry once. A lost response leaves uncertain billing and does not automatically repeat potentially charged work. Google keeps its bounded tries within one page and disables an additional engine retry, so a page pays for at most one captcha solve.
 
 ## Budget and persistence
 
@@ -113,9 +113,9 @@ Each try runs these steps:
 2. Fetch through `stickyProxy(proxies[slot % proxies.length], slot)`. It rewrites `-rotate` to `-<slot>` in the username and keeps the rest of the proxy string, port included. A line without `-rotate` stays unchanged. The request sends the family's header set in order, the slot's User-Agent, and its cookies over HTTP/1.1. The transport returns the cookies the response set.
 3. On an ok page, keep the slot: merge the cookies, set the next query at least 12 seconds later, clear the lease, and count the query. On unrecognized markup, keep the slot the same way and fail the page at once, because the page is the parser's problem, not the IP's. On a block, a transport failure, a non-200 response, or Google's unsupported-browser page, delete the slot and try again.
 
-A page makes at most five tries within a 75-second deadline. A slot that is still pacing is not leased, so the pages of one search usually use different slots, and concurrent searches grow the warm set. If the slot store fails, the try uses a fresh slot; slot writes are best-effort and never fail a search.
+A page makes at most five tries within a 75-second deadline, or 195 seconds with `googleSolve`. A slot that is still pacing is not leased, so the pages of one search usually use different slots, and concurrent searches grow the warm set. If the slot store fails, the try uses a fresh slot; slot writes are best-effort and never fail a search.
 
-The `tries` table records the time, route (`http` for this transport, `maps` and `browser` for the others), query, attempt number, outcome, exit IP (decoded from Google's `/sorry` redirect, so blocked tries only), curl-counted bytes, proxy `host:port`, User-Agent family and agent, and slot of every try. Each write deletes rows older than seven days. History writes are best-effort and never fail a search. A failed page records `google:<reason>` as the attempt's ledger error code, where the reason is the SearchError code or the ordered list of failed tries.
+The `tries` table records the time, route (`http` for this transport, `maps` and `browser` for the others), query, attempt number, outcome, exit IP (decoded from Google's `/sorry` redirect, so blocked tries only), curl-counted bytes, proxy `host:port`, User-Agent family and agent, and slot of every try. A captcha solve writes its own row with the same slot, outcome `solved` or `solve:<code>`, and no bytes. Each write deletes rows older than seven days. History writes are best-effort and never fail a search. A failed page records `google:<reason>` as the attempt's ledger error code, where the reason is the SearchError code or the ordered list of failed tries.
 
 ## Google browser pool
 
@@ -124,6 +124,26 @@ The pool is a daemon, because each search is a short-lived CLI process and a war
 `src/browser/daemon.ts` owns the sessions. Each session is its own Chrome, launched through its own relay (`src/browser/relay.ts`). The relay forwards CONNECT to the proxy that `stickyProxy` gives the session's slot, so the session keeps one exit IP across connections. It refuses every host but the five Google search hosts, so Chrome's own traffic never reaches the proxy, and it counts the bytes. A session opens with a desktop Chrome User-Agent, which passes Google's first query more often. After its first pass, the session switches to a Firefox-for-Android User-Agent and a 412x915 viewport, and Google serves its lightweight layout: about 45 KB a page with plain `/url?q=` links. `src/browser/serp.ts` parses that layout; a light page with no result blocks is an empty result, not an unknown page.
 
 Session states are `starting`, `warm`, `blocked`, and `retired`, and a transition table maps each query verdict to the next state. A captcha, an HTTP 403, a JavaScript wall, or a navigation timeout blocks a session. A crash, an unrecognized page before the session has passed once, or two misses in a row (tunnel failures or unrecognized pages) retire it. A blocked or retired session closes its Chrome. A request takes the free session with the earliest next turn, and each session waits 12 seconds between queries. The pool opens a session only when no session is warm or a request has already waited 12 seconds, opens one at a time at least 5 seconds apart, and holds at most two. Before each open, `browserFailures` counts the failed browser tries of the last hour in the `tries` table; at 40, the pool opens nothing more and answers `capped`. That bounds a bad hour to about 3.5 MB of blocked first pages. Requests carry a 30-second queue deadline, and no open or query starts after it. Every query writes a `tries` row with route `browser`, family `desktop` or `mobile`, the session's slot, and the relay's byte count. The last page the parser did not recognize is saved per layout to `~/.wideband/browser-unrecognized-desktop.html` or `-mobile.html`.
+
+## Google captcha solving
+
+A caller opts in with `googleSolve`, which the CLI sets with `--google-solve`. The engine rejects the option with `INVALID_ARGS` and exit code 2 unless a selected provider sets the `solves` capability, as `google` and `google-browser` do, and unless `WIDEBAND_2CAPTCHA_KEY` is set. The same table of query options and capabilities checks `googlePages` against `pages`.
+
+Google's block page, `/sorry/index`, holds a reCAPTCHA Enterprise widget: a `div.g-recaptcha` with `data-sitekey` and `data-s`, inside `form#captcha-form` with hidden `q` and `continue` fields. `sorryForm` reads those four values. `solveSorry` sends 2captcha a `RecaptchaV2EnterpriseTask` with the sitekey, `enterprisePayload.s`, the slot's cookies, and the slot's sticky proxy, so the token is made on the exit IP that Google blocked. It polls every 5 seconds for up to 120 seconds and returns the token with the charge 2captcha reports. An error code, a timeout, or a lost connection fails the solve as `solve:<code>`.
+
+On the HTTP route, a page solves at most once, and only when its second or later try is blocked. A block on the first try is usually followed by a fresh slot that passes, so it is not worth $0.003 and 30 seconds. The blocked slot leaves the `slots` table before the solve starts, as after any block, so no other process can lease it during the solve. The solve then runs on that slot:
+
+1. Fetch the `/sorry` page from the block's redirect. A block page that Google served directly is used as it is.
+2. Get a token from `solveSorry`.
+3. Post the token with `q` and `continue` to `/sorry/index`. Google answers with a 302 to the search URL plus a `google_abuse` value.
+4. Fetch that URL. Google sets the `GOOGLE_ABUSE_EXEMPTION` cookie on this response. Without this fetch, no cookie is set and the next search on the slot is blocked.
+5. Fetch the search page again with every cookie the solve collected, and treat it as the try's page. An ok page puts the slot back in the warm set with the exemption cookie. Any other outcome deletes the slot, and the page goes on to its next try.
+
+On the browser route, the daemon solves at most once per request, on the first captcha verdict. It adds a `g-recaptcha-response` textarea to `#captcha-form`, because the widget script that would create it stays blocked, puts the token in it, and submits the form. It waits up to 20 seconds for a URL outside `/sorry/` and parses that page. That verdict replaces the captcha before the state table runs. A new session's first query is a desktop page and its results come from the next query, so the solve extends the request's queue deadline by the time it took.
+
+The page reports what it paid as `microUSD`, on its result or on its `SearchError`, and the adapter gives that amount to the ledger as an observed charge. With `googleSolve`, each page reserves `SOLVE_MICRO_USD_MAX` ($0.003) against the budget, and a page that did not solve records an observed $0. Without `googleSolve`, a Google page reserves nothing and records a free estimate. The page deadline with a solve is 75 seconds plus `SOLVE_TIMEOUT_MS`, and both Google adapters have a 240-second provider deadline.
+
+On October 12, 2026, a probe solved one blocked slot in 33 seconds for $0.00299, and the slot then served 15 of 15 searches at a 12-second pace. An earlier solve that skipped the `google_abuse` fetch got no cookie, and its next search was blocked. At 12:34 PM Mountain, a `--google-solve` page leased two slots whose exit IPs Google had blocked minutes before. Both tries were blocked. The solve took 19 seconds and cost $0.00299, and the page returned results after 24 seconds. That slot then served 10 of 10 searches at a 13-second pace. At 12:37 PM, a `google-browser` request got a captcha on a new session's first query. The solve took 25 seconds and cost $0.00299, and the request returned results after 43 seconds. The session then served 4 of 4 searches.
 
 ## Maps request template
 
