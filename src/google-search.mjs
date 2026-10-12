@@ -111,7 +111,7 @@ export function parseResults(html, start = 0) {
   }
   if (!results.length) {
     if (/did not match any documents|No results found for/i.test(text)) return { results, nextStart: null };
-    if (/enable javascript|not redirected within a few seconds|trouble accessing Google Search/i.test(text)) {
+    if (/enable javascript|not redirected within a few seconds|trouble accessing Google Search|Verifying your request/i.test(text)) {
       throw new SearchError('challenge', 'Google returned a JavaScript challenge.');
     }
     if (/browser isn't supported anymore/i.test(text)) throw new SearchError('unsupported', 'Google does not serve this User-Agent.');
@@ -287,6 +287,10 @@ export async function solverReady() {
   return withStore(db => Number(db.prepare("SELECT count(*) AS used FROM tries WHERE (outcome = 'solved' OR outcome LIKE 'solve:%') AND at >= ?").get(Date.now() - DAY_MS).used) < SOLVES_PER_DAY).catch(() => false);
 }
 
+function exemption(cookies) {
+  return cookies.GOOGLE_ABUSE_EXEMPTION ? { GOOGLE_ABUSE_EXEMPTION: cookies.GOOGLE_ABUSE_EXEMPTION } : {};
+}
+
 function freshSlot(taken) {
   let slot;
   do slot = FIRST_HTTP_SLOT + Math.floor(Math.random() * HTTP_SLOTS); while (taken.has(slot));
@@ -304,7 +308,7 @@ function lease(now) {
 }
 
 function keep(slot, cookies, now) {
-  return withStore(db => db.prepare('INSERT INTO slots (slot, family, agent, cookies, next_at, lease_until, queries, used_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT (slot) DO UPDATE SET cookies = excluded.cookies, next_at = excluded.next_at, lease_until = 0, queries = excluded.queries, used_at = excluded.used_at').run(slot.slot, slot.family, slot.agent, JSON.stringify(cookies), now + PACE_MS, slot.queries + 1, now));
+  return withStore(db => db.prepare('INSERT INTO slots (slot, family, agent, cookies, next_at, lease_until, queries, used_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?) ON CONFLICT (slot) DO UPDATE SET cookies = excluded.cookies, next_at = excluded.next_at, lease_until = 0, queries = excluded.queries, used_at = excluded.used_at').run(slot.slot, slot.family, slot.agent, JSON.stringify(exemption(cookies)), now + PACE_MS, slot.queries + 1, now));
 }
 
 function drop(slot) {
@@ -361,7 +365,7 @@ export function createSearchEffect() {
             return Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family: slot.family, agent: slot.agent, slot: slot.slot })).pipe(Effect.ignore);
           };
           const fetchSearch = Effect.gen(function* () {
-            const page = yield* transport({ method: 'GET', url: SEARCH_URL, params: { q: query, start, hl: 'en', gl: 'us', pws: '0', sca_esv: '1', gbv: '1' }, headers, cookies: slot.cookies, proxy });
+            const page = yield* transport({ method: 'GET', url: SEARCH_URL, params: { q: query, start, hl: 'en', gl: 'us', pws: '0', sca_esv: '1', gbv: '1' }, headers, cookies: exemption(slot.cookies), proxy });
             const parsed = yield* Effect.result(Effect.try({
               try: () => {
                 if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');

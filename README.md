@@ -322,7 +322,7 @@ For regular or batch use, use a rotating residential gateway. This implementatio
 
 #### Warm slots
 
-Webshare usernames control rotation. `USERNAME-rotate` gives each connection a new exit IP, and `USERNAME-<N>` keeps one exit IP for session N. Wideband rewrites `-rotate` to a slot number from 50,000 to 99,999, so each slot keeps one exit IP. A line without `-rotate` is used as written. A slot also keeps one User-Agent and the cookies Google set on its IP.
+Webshare usernames control rotation. `USERNAME-rotate` gives each connection a new exit IP, and `USERNAME-<N>` keeps one exit IP for session N. Wideband rewrites `-rotate` to a slot number from 50,000 to 99,999, so each slot keeps one exit IP. A line without `-rotate` is used as written. A slot also keeps one User-Agent and, after a solve, the `GOOGLE_ABUSE_EXEMPTION` cookie. It sends no other Google cookie, because Google answers queries with `OR` from a returning cookie with a "Verifying your request" wait page.
 
 The `slots` table in `~/.wideband/google-tries.sqlite` holds the warm slots. A warm slot passed a query and has not been blocked since. A try leases the ready slot that has waited longest, for 30 seconds, so two processes never use one slot at once. A slot waits 12 seconds between queries. If no slot is ready, the try makes a fresh one. A block deletes the slot, and so do 30 idle minutes. In an October 12, 2026 probe at that pace, three of four fixed IPs served 30 of 30 searches with no block, and a kept-alive page took 0.6 seconds.
 
