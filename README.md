@@ -10,7 +10,7 @@ A multi-provider web search API for AI agents. One query runs across configured 
 
 Search providers overlap heavily. For agentic research the number that matters is **unique sources per dollar** — wideband exists to maximize it and to measure it.
 
-- **14 provider adapters** — anyapi (Google results), Brave, Desearch, Exa, Google, Jina, Linkup, Maps (Google Maps places), Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google and Maps are included in default scans.
+- **15 provider adapters** — anyapi (Google results), Brave, Desearch, Exa, Google, Google browser, Jina, Linkup, Maps (Google Maps places), Nimble, Parallel, Perplexity, Sailor, SearchX, Tavily. Google and Maps are included in default scans. Google browser runs only when you select it.
 - **Real deduplication** — URL canonicalization (tracking params, fragments, default ports stripped) plus metadata union, so five providers returning the same article yield one Source with five provenance entries.
 - **Reciprocal Rank Fusion** ranking — robust across heterogeneous providers, no score-normalization games.
 - **Request accounting.** Each potentially billable attempt reserves budget before dispatch and gets a durable SQLite record. Reported charges, estimates, and unresolved charges remain distinct.
@@ -76,7 +76,7 @@ Key flags:
 
 - `--providers a,b,c` — restrict the fan-out
 - `--max N` — per-provider hit limit, 1–100; providers can return fewer
-- `--google-pages N` — Google, AnyAPI, or Maps page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include one of them
+- `--google-pages N` — Google, Google browser, AnyAPI, or Maps page limit, 1–10; defaults `--max` to ten times this value unless explicitly set; an explicit provider list must include one of them
 - `--budget USD` — cap on request reservations, including retries and pages; see the cost model below
 - `--timeout MS` — provider deadline including queue waits, requests, and retries
 - `--stream` — provider snapshots and the final result as NDJSON
@@ -217,6 +217,7 @@ As configured in the adapters (modeled estimate; provider-reported dollars overr
 | Nimble | $0.005/req | trial workspace |
 | anyapi | $0.0005/page base; reserve up to $0.0009 for automatic fallback | provider reports the charge |
 | Google | $0/req; you pay for the proxies | your proxy plan |
+| Google browser | $0/req; you pay for the proxies | your proxy plan |
 | Maps | $0/req; you pay for the proxies, about 36 KB per page | your proxy plan |
 
 Prices are modeled estimates, not account invoices. Free-tier models assume the allowance applies. `--budget` limits reservations before each attempt. A reported amount replaces its reservation. A lost response retains the reserved estimate and increments `unknownAttempts`; it does not silently become free. Actual provider charges can differ from a stale model, and cancellation cannot undo a dispatched request.
@@ -229,7 +230,7 @@ SQLite stores sweeps, provider outcomes, request attempts, cached results, and s
 
 ## Providers
 
-Google is included in default scans alongside configured API providers. An explicit `--providers` list replaces the default set:
+Google is included in default scans alongside configured API providers. Google browser is not. An explicit `--providers` list replaces the default set:
 
 ```sh
 wideband scan "scuba diving shops bonaire"
@@ -237,13 +238,7 @@ wideband scan "scuba diving shops bonaire" --providers google,brave --google-pag
 wideband scan "site:padi.com/dive-center/" --providers google --google-pages 10
 ```
 
-#### Browser fallback
-
-When Google blocks the HTTP route, the `google` provider asks a local pool of warm headless Chrome sessions for the same page. The pool needs installed Google Chrome and the optional `patchright` package. The first fallback starts it in the background with `wideband browser`. It listens on `127.0.0.1:47651`, logs to `~/.wideband/browser.log`, and exits after 30 idle minutes. `WIDEBAND_GOOGLE_ROUTE` selects the route: `auto` (the default) tries HTTP first and asks the pool when every HTTP try fails or when fewer than 20% of the last 10 minutes' HTTP tries passed, `http` turns the fallback off, and `browser` uses the pool alone.
-
-```sh
-WIDEBAND_GOOGLE_ROUTE=browser wideband scan "live music Ogden UT" --providers google
-```
+Wideband has two Google providers, and you choose one. `google` is the fast HTTP route with warm slots. `google-browser` is a slow, opt-in route through headless Chrome, for when `google` keeps failing. Nothing falls back from one to the other.
 
 ### Local Maps provider
 
@@ -265,13 +260,13 @@ Install Bun 1.4 or newer, [uv](https://docs.astral.sh/uv/getting-started/install
 uv run --with curl-cffi==0.16.3 python -c 'import curl_cffi; print("Google transport ready")'
 ```
 
-Save your proxy provider's connection details in a private file outside the repository, such as `~/.config/wideband/proxies.txt`. Create its parent directory if necessary. Use one line for a rotating residential gateway, which gives every new connection a new exit IP. The `host:port:username:password` format is sufficient:
+Save your proxy provider's connection details in a private file outside the repository, such as `~/.config/wideband/proxies.txt`. Create its parent directory if necessary. Use one line for a rotating residential gateway. With Webshare, use the username that ends in `-rotate`; wideband turns it into one sticky session per slot. The `host:port:username:password` format is sufficient:
 
 ```text
-gateway.example.net:80:USERNAME:PASSWORD
+p.webshare.io:80:USERNAME-rotate:PASSWORD
 ```
 
-A list of static proxies, one per line, also works. Wideband picks a random line for each try and never rests a proxy, so a static list wears out faster than a rotating gateway.
+A list of static proxies, one per line, also works. Slot N uses line N modulo the number of lines, and a blocked slot is replaced by a fresh one, so a static list wears out faster than a rotating gateway.
 
 Replace those example values with your own. Export the file's absolute path, restrict its permissions, and test Google alone:
 
@@ -307,11 +302,11 @@ Credentials in these separate fields are URL-encoded by wideband. Complete URLs 
 
 #### How and why it works
 
-The transport in [google-search.mjs](src/google-search.mjs) starts `uv`, which runs Python with pinned `curl_cffi==0.16.3`. It passes the query, page offset, and proxy connection through stdin, then receives the response as JSON.
+The transport in [google-search.mjs](src/google-search.mjs) starts `uv`, which runs Python with pinned `curl_cffi==0.16.3`. It passes the query, page offset, proxy connection, headers, and the slot's cookies through stdin, then receives the response and its new cookies as JSON.
 
 The request targets Google's `/search` endpoint with `gbv=1` and an old feature-phone User-Agent. That combination returns compact HTML containing the search results without requiring a JavaScript browser. A results page is about 5.5 KB gzip-compressed. The request fixes `hl=en`, `gl=us`, and `pws=0`. As of October 2026, Google answers `/wml/search` with HTTP 403.
 
-Each try picks a random User-Agent from [google-agents.json](src/google-agents.json). The file groups agents into families, and each family has its own ordered header set; `"User-Agent": null` marks where the agent goes in that order. The transport sends exactly those headers over HTTP/1.1. Google serves the light page to few User-Agents, and it blocks one after heavy use: NokiaN72 and then Nokia6230i went from mostly ok to blocked on every try within hours. In an October 10, 2026 test of 147 old-browser User-Agents, 23 Samsung `GT-` phones with NetFront 3.5 to 4.2 got results. Most others got Google's "browser isn't supported" page or HTTP 403. Test a new agent through the gateway before you add it.
+Each new slot picks a random User-Agent from [google-agents.json](src/google-agents.json) and keeps it for the slot's life. The file groups agents into families, and each family has its own ordered header set; `"User-Agent": null` marks where the agent goes in that order. The transport sends exactly those headers over HTTP/1.1. Google serves the light page to few User-Agents, and it blocks one after heavy use: NokiaN72 and then Nokia6230i went from mostly ok to blocked on every try within hours. In an October 10, 2026 test of 147 old-browser User-Agents, 23 Samsung `GT-` phones with NetFront 3.5 to 4.2 got results. Most others got Google's "browser isn't supported" page or HTTP 403. Test a new agent through the gateway before you add it.
 
 `curl_cffi` supplies the `chrome99_android` TLS profile, with its default Chrome headers turned off. Google's block followed the User-Agent string, not the TLS profile: in the same test, five TLS profiles gave the same outcome. [curl_cffi's browser impersonation documentation](https://github.com/lexiforest/curl_cffi#features).
 
@@ -321,22 +316,28 @@ Cheerio extracts organic result cards, titles, snippets, and next-page offsets. 
 
 An ordinary home or office IP may work for occasional direct requests. Repeated automated searches can trigger restrictions affecting that public IP, including other users sharing the connection. Google documents these shared-network effects in its [unusual traffic guidance](https://support.google.com/websearch/answer/86640).
 
-For regular or batch use, use a rotating residential gateway. This implementation has been verified with one in October 2026. Every try leaves from a new exit IP, so a block costs one retry, not a resting proxy. Proxy reputation and traffic from other customers still matter; buying proxies does not guarantee uninterrupted access.
+For regular or batch use, use a rotating residential gateway. This implementation has been verified with Webshare in October 2026. A blocked slot is deleted and the next try uses a fresh slot with a new exit IP, so a block costs one retry. Proxy reputation and traffic from other customers still matter; buying proxies does not guarantee uninterrupted access.
 
 **The current adapter requires `WIDEBAND_PROXY_FILE` and has no direct-IP mode.** An unset or empty inventory fails before contacting Google. A local forward proxy that uses your machine's public IP still exposes that same exit IP.
 
-Each try runs in its own transport process, so it opens a new connection through a line picked at random from the file. Through a rotating gateway, every try leaves from a new exit IP. Wideband does not choose the exit. Use your provider's session or endpoint controls when you need sticky or country-specific exits.
+#### Warm slots
+
+Webshare usernames control rotation. `USERNAME-rotate` gives each connection a new exit IP, and `USERNAME-<N>` keeps one exit IP for session N. Wideband rewrites `-rotate` to a slot number from 50,000 to 99,999, so each slot keeps one exit IP. A line without `-rotate` is used as written. A slot also keeps one User-Agent and the cookies Google set on its IP.
+
+The `slots` table in `~/.wideband/google-tries.sqlite` holds the warm slots. A warm slot passed a query and has not been blocked since. A try leases the ready slot that has waited longest, for 30 seconds, so two processes never use one slot at once. A slot waits 12 seconds between queries. If no slot is ready, the try makes a fresh one. A block deletes the slot, and so do 30 idle minutes. In an October 12, 2026 probe at that pace, three of four fixed IPs served 30 of 30 searches with no block, and a kept-alive page took 0.6 seconds.
+
+Wideband does not choose the exit country. Use your provider's endpoint controls when you need country-specific exits. List the warm slots with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT slot, family, queries, datetime(used_at / 1000, 'unixepoch') FROM slots"`.
 
 #### Retries and try history
 
-A page makes at most three tries, each on a new connection. Wideband never paces or rests a proxy.
+A page makes at most five tries. Each try leases a warm slot or makes a fresh one.
 
-- A block, a transport failure, or another non-200 response is recorded and retried at once. A block is a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, a consent page, a JavaScript challenge, or the `unsupported` page Google shows a User-Agent it no longer serves.
-- Unrecognized markup stops the search so a parser change cannot be hidden by repeated tries.
+- A block, a transport failure, or another non-200 response deletes the slot, is recorded, and is retried at once. A block is a redirect to Google's `/sorry` page, HTTP 429, a CAPTCHA page, a consent page, a JavaScript challenge, or the `unsupported` page Google shows a User-Agent it no longer serves.
+- Unrecognized markup stops the search so a parser change cannot be hidden by repeated tries. The slot stays warm.
 - Each try has a 20-second network timeout, and each page has a 75-second deadline.
 - Google has a 120-second provider deadline. `--timeout` changes that provider deadline; the page and network limits still apply.
 
-The `tries` table in `~/.wideband/google-tries.sqlite` keeps one row per try for seven days: the time `at` in milliseconds, the `query`, the `attempt` number, the `outcome` (`ok`, `blocked`, `transport`, and so on), the exit `ip`, the `bytes`, the `proxy` as `host:port`, and the User-Agent `family` and `agent`. It holds no credentials. Google encodes the exit IP in its `/sorry` redirect, so `ip` is filled for blocked tries only. `bytes` counts the HTTP request and the compressed response as curl reports them. TLS and the proxy's CONNECT exchange come on top: in October 2026 an ok try read about 7.4 KB in `bytes` and measured 12 to 14 KB on the wire. Writing the history is best-effort and never fails a search. Count the last hour's tries and bytes with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT outcome, attempt, count(*), sum(bytes) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1, 2"`. Find worn-out agents with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT agent, count(*), round(100.0 * sum(outcome != 'ok') / count(*)) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1 ORDER BY 3 DESC"`.
+The `tries` table in `~/.wideband/google-tries.sqlite` keeps one row per try for seven days: the time `at` in milliseconds, the `query`, the `attempt` number, the `outcome` (`ok`, `blocked`, `transport`, and so on), the exit `ip`, the `bytes`, the `proxy` as `host:port`, the User-Agent `family` and `agent`, and the `slot`. It holds no credentials. Google encodes the exit IP in its `/sorry` redirect, so `ip` is filled for blocked tries only. `bytes` counts the HTTP request and the compressed response as curl reports them. TLS and the proxy's CONNECT exchange come on top: in October 2026 an ok try read about 7.4 KB in `bytes` and measured 12 to 14 KB on the wire. Writing the history is best-effort and never fails a search. Count the last hour's tries and bytes with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT outcome, attempt, count(*), sum(bytes) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1, 2"`. Find worn-out agents with `sqlite3 -readonly ~/.wideband/google-tries.sqlite "SELECT agent, count(*), round(100.0 * sum(outcome != 'ok') / count(*)) FROM tries WHERE at > (strftime('%s','now') - 3600) * 1000 GROUP BY 1 ORDER BY 3 DESC"`.
 
 Cancellation kills the transport process group on macOS and Linux and waits for it to close. If a later page fails, earlier hits remain available with provider status `partial` and `complete: false`.
 
@@ -367,6 +368,16 @@ SDK calls use `scan({ q: 'dive shops', googlePages: 3, max: 30 }, { providers: [
 
 Run `bun run build` and `bun testing/google-live.ts` for live CLI checks using your configured proxies and providers.
 
+### Google browser provider
+
+The `google-browser` provider asks a local pool of warm headless Chrome sessions for each page. It is opt-in: default scans skip it, and it runs only when `--providers` names it. Use it when `google` keeps failing. It is slow, and Google often answers a new Chrome session with a captcha. In an October 12, 2026 test of 100 queries, it returned 46 pages with a median of 25 seconds each, and 37 of 39 sessions got a captcha on their first query. The `google` provider returned 89 pages for the same queries.
+
+The pool needs installed Google Chrome and the optional `patchright` package. The first `google-browser` search starts it in the background with `wideband browser`. It listens on `127.0.0.1:47651`, logs to `~/.wideband/browser.log`, and exits after 30 idle minutes. It uses the same `WIDEBAND_PROXY_FILE`, with sticky sessions from 10,000 to 49,999.
+
+```sh
+wideband scan "live music Ogden UT" --providers google-browser
+```
+
 ### Google through AnyAPI
 
 The `anyapi` provider returns Google results through the [anyapi](https://getanyapi.com) `google.search` API, with no local proxies, uv, or Python. Its published base price is $0.0005 per page, and default automatic fallback can cost up to $0.0009. Each attempt reserves that upper bound and then records the reported amount. It reads its key from `ANYAPI_API_KEY`, or else from `~/.anyapi/config.json`. `--google-pages` sets its page count.
@@ -380,6 +391,7 @@ Page depth participates in cache keys. Other providers retain their own result c
 | Exa | `EXA_API_KEY` |
 | anyapi | `ANYAPI_API_KEY`, or `~/.anyapi/config.json` |
 | Google | `WIDEBAND_PROXY_FILE` |
+| Google browser | `WIDEBAND_PROXY_FILE`, Google Chrome, and `patchright` |
 | Jina | `JINA_API_KEY` |
 | Linkup | `LINKUP_API_KEY` |
 | Nimble | `NIMBLE_API_KEY` |
