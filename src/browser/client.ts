@@ -51,6 +51,6 @@ export function browserPage(query: string, start: number): Effect.Effect<GoogleP
     try: signal => askDaemon(query, start, AbortSignal.any([signal, AbortSignal.timeout(BROWSER_REPLY_MS)])),
     catch: () => new SearchError('browser', 'The browser route returned no usable reply.', ['browser:unavailable']),
   }).pipe(Effect.flatMap(reply => reply.ok
-    ? Effect.succeed({ query, start, results: [...reply.results], nextStart: reply.nextStart })
+    ? Effect.succeed({ query, start, results: [...reply.results], nextStart: reply.nextStart, microUSD: 0 })
     : Effect.fail(new SearchError('browser', `The browser route answered ${reply.code}.`, [`browser:${reply.code}`]))))
 }

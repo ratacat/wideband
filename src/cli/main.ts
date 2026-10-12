@@ -19,6 +19,7 @@ const HELP = `wideband — fan-out search across providers, merged unique source
   schema [type]   JSON Schema for outputs
 flags:
   --google-pages N fetch up to 1–10 Google, AnyAPI or Maps pages (default 1)
+  --google-solve  pay 2captcha about $0.003 to clear a blocked Google page; needs WIDEBAND_2CAPTCHA_KEY
   --max N         results per provider, 1–100; defaults to 10 × Google pages when specified
   --budget USD    limit estimated request costs, including pages and retries
   --timeout MS    provider deadline, including retries and waits
@@ -41,6 +42,7 @@ const options = {
   providers: { type: 'string' },
   max: { type: 'string' },
   'google-pages': { type: 'string' },
+  'google-solve': { type: 'boolean' },
   budget: { type: 'string' },
   timeout: { type: 'string' },
   session: { type: 'string' },
@@ -66,6 +68,7 @@ type CliValues = {
   providers?: string
   max?: string
   'google-pages'?: string
+  'google-solve'?: boolean
   budget?: string
   timeout?: string
   session?: string
@@ -284,6 +287,7 @@ async function run() {
         q,
         mode: command,
         ...(googlePages !== undefined ? { googlePages } : {}),
+        ...(values['google-solve'] ? { googleSolve: true } : {}),
         ...(max !== undefined ? { max } : {}),
         ...(values.media ? { mediaType: values.media } : {}),
         ...(freshness ? { freshness } : {}),

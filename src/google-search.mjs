@@ -32,6 +32,7 @@ const SEARCH_URL = 'https://www.google.com/search';
 const SORRY_URL = 'https://www.google.com/sorry/index';
 const SOLVER_URL = 'https://api.2captcha.com';
 const SOLVE_POLL_MS = 5_000;
+const SOLVE_FROM_TRY = 2;
 export const SOLVE_TIMEOUT_MS = 120_000;
 export const SOLVE_MICRO_USD_MAX = 3_000;
 const FAMILIES = new Map(families.map(({ family, headers }) => [family, headers]));
@@ -51,11 +52,12 @@ const decodeTaskResult = Schema.decodeUnknownSync(Schema.Union([
 ]));
 
 export class SearchError extends Error {
-  constructor(code, message, failures = []) {
+  constructor(code, message, failures = [], microUSD = 0) {
     super(message);
     this.name = 'SearchError';
     this.code = code;
     this.failures = failures;
+    this.microUSD = microUSD;
   }
 }
 
@@ -303,52 +305,100 @@ function drop(slot) {
   return withStore(db => db.prepare('DELETE FROM slots WHERE slot = ?').run(slot.slot));
 }
 
-export function createSearchEffect() {
-  return function searchEffect(query, start = 0) {
+function clearSorry(blocked, slot, proxy, headers) {
+  return Effect.suspend(() => {
+    let cookies = { ...slot.cookies, ...blocked.cookies };
+    let microUSD = 0;
+    const send = input => transport({ ...input, headers, cookies, proxy }).pipe(Effect.flatMap(response => {
+      if ('error' in response) return Effect.fail(solveFailure('transport', 'Proxy connection failed during the solve.'));
+      cookies = { ...cookies, ...response.cookies };
+      return Effect.succeed(response);
+    }));
     return Effect.gen(function* () {
-      const proxies = yield* Effect.try({
-        try: () => {
-          if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
-          if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
-          const proxies = proxyUrls();
-          if (!proxies.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
-          return proxies;
-        },
-        catch: error => error,
-      });
+      const redirected = blocked.location.includes('/sorry');
+      const sorry = redirected ? yield* send({ method: 'GET', url: blocked.location }) : blocked;
+      const form = sorryForm(sorry.html);
+      if (!form) return yield* Effect.fail(solveFailure('form', 'The block page has no captcha form.'));
+      const solution = yield* solveSorry({ pageUrl: redirected ? blocked.location : SORRY_URL, form, proxy, cookies });
+      microUSD = solution.microUSD;
+      const posted = yield* send({ method: 'POST', url: SORRY_URL, form: { 'g-recaptcha-response': solution.token, q: form.q, continue: form.continue } });
+      if (!posted.location) return yield* Effect.fail(solveFailure('rejected', `Google answered the captcha token with HTTP ${posted.status}.`));
+      yield* send({ method: 'GET', url: posted.location });
+      return { cookies, microUSD };
+    }).pipe(Effect.mapError(error => new SearchError('solve', error.message, error.code === 'solve' ? error.failures : [`solve:${error.code}`], microUSD)));
+  });
+}
+
+export function createSearchEffect() {
+  return function searchEffect(query, start = 0, options = {}) {
+    return Effect.suspend(() => {
       const failures = [];
-      for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-        const slot = yield* Effect.tryPromise(() => lease(Date.now())).pipe(Effect.orElseSucceed(() => freshSlot(new Set())));
-        const proxy = stickyProxy(proxies[slot.slot % proxies.length], slot.slot);
-        const page = yield* transport({ method: 'GET', url: SEARCH_URL, params: { q: query, start, hl: 'en', gl: 'us', pws: '0', sca_esv: '1', gbv: '1' }, headers: { ...FAMILIES.get(slot.family), 'User-Agent': slot.agent }, cookies: slot.cookies, proxy });
-        const parsed = yield* Effect.result(Effect.try({
+      let microUSD = 0;
+      let solve = options.solve === true;
+      return Effect.gen(function* () {
+        const proxies = yield* Effect.try({
           try: () => {
-            if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
-            if (page.status === 429 || page.location.includes('/sorry')) throw new SearchError('blocked', `Google blocked this exit IP with HTTP ${page.status}.`);
-            if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
-            return { query, start, ...parseResults(page.html, start) };
+            if (typeof query !== 'string' || !query.trim()) throw new TypeError('Query must be a nonempty string.');
+            if (!Number.isSafeInteger(start) || start < 0) throw new TypeError('Start must be a nonnegative integer.');
+            const proxies = proxyUrls();
+            if (!proxies.length) throw new SearchError('inventory', 'Proxy inventory is empty.');
+            return proxies;
           },
           catch: error => error,
-        }));
-        const error = parsed._tag === 'Failure' ? parsed.failure : undefined;
-        const outcome = error ? error.code ?? 'error' : 'ok';
-        yield* Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family: slot.family, agent: slot.agent, slot: slot.slot })).pipe(Effect.ignore);
-        yield* Effect.tryPromise(() => !error || outcome === 'unrecognized' ? keep(slot, { ...slot.cookies, ...page.cookies }, Date.now()) : drop(slot)).pipe(Effect.ignore);
-        if (!error) return parsed.success;
-        if (!(error instanceof SearchError) || error.code === 'unrecognized') return yield* Effect.fail(error);
-        failures.push(error.code);
-      }
-      return yield* Effect.fail(new SearchError('exhausted', `Every Google try failed: ${failures.join(', ')}.`, failures));
-    }).pipe(Effect.timeoutOrElse({
-      duration: PAGE_TIMEOUT_MS,
-      orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
-    }));
+        });
+        for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+          const slot = yield* Effect.tryPromise(() => lease(Date.now())).pipe(Effect.orElseSucceed(() => freshSlot(new Set())));
+          const proxy = stickyProxy(proxies[slot.slot % proxies.length], slot.slot);
+          const headers = { ...FAMILIES.get(slot.family), 'User-Agent': slot.agent };
+          const record = (outcome, page = {}) => {
+            if (outcome !== 'ok') failures.push(outcome);
+            return Effect.tryPromise(() => recordTry({ route: 'http', query, attempt, outcome, ip: exitIp(page.location), bytes: page.bytes ?? null, proxy: new URL(proxy).host, family: slot.family, agent: slot.agent, slot: slot.slot })).pipe(Effect.ignore);
+          };
+          const fetchSearch = Effect.gen(function* () {
+            const page = yield* transport({ method: 'GET', url: SEARCH_URL, params: { q: query, start, hl: 'en', gl: 'us', pws: '0', sca_esv: '1', gbv: '1' }, headers, cookies: slot.cookies, proxy });
+            const parsed = yield* Effect.result(Effect.try({
+              try: () => {
+                if ('error' in page) throw new SearchError('transport', 'Proxy connection failed.');
+                if (page.status === 429 || page.location.includes('/sorry')) throw new SearchError('blocked', `Google blocked this exit IP with HTTP ${page.status}.`);
+                if (page.status !== 200) throw new SearchError('http', `Google returned HTTP ${page.status}.`);
+                return { query, start, ...parseResults(page.html, start) };
+              },
+              catch: error => error,
+            }));
+            const outcome = parsed._tag === 'Failure' ? parsed.failure.code ?? 'error' : 'ok';
+            yield* record(outcome, page);
+            yield* Effect.tryPromise(() => outcome === 'ok' || outcome === 'unrecognized' ? keep(slot, { ...slot.cookies, ...page.cookies }, Date.now()) : drop(slot)).pipe(Effect.ignore);
+            return { page, parsed, outcome };
+          });
+          let { page, parsed, outcome } = yield* fetchSearch;
+          if (outcome === 'blocked' && solve && attempt >= SOLVE_FROM_TRY) {
+            solve = false;
+            const cleared = yield* Effect.result(clearSorry(page, slot, proxy, headers));
+            microUSD += cleared._tag === 'Success' ? cleared.success.microUSD : cleared.failure.microUSD;
+            yield* record(cleared._tag === 'Success' ? 'solved' : cleared.failure.failures[0]);
+            if (cleared._tag === 'Success') {
+              slot.cookies = cleared.success.cookies;
+              ({ parsed, outcome } = yield* fetchSearch);
+            }
+          }
+          if (parsed._tag === 'Success') return { ...parsed.success, microUSD };
+          if (!(parsed.failure instanceof SearchError) || outcome === 'unrecognized') return yield* Effect.fail(parsed.failure);
+        }
+        return yield* Effect.fail(new SearchError('exhausted', `Every Google try failed: ${failures.join(', ')}.`, failures));
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: options.solve === true ? PAGE_TIMEOUT_MS + SOLVE_TIMEOUT_MS : PAGE_TIMEOUT_MS,
+          orElse: () => Effect.fail(new SearchError('timeout', 'Google page request timed out.')),
+        }),
+        Effect.mapError(error => error instanceof SearchError ? new SearchError(error.code, error.message, error.failures, microUSD) : error),
+      );
+    });
   };
 }
 
 export function createSearch() {
   const run = createSearchEffect();
-  return (query, start = 0, options = {}) => Effect.runPromise(run(query, start), { signal: options.signal });
+  return (query, start = 0, options = {}) => Effect.runPromise(run(query, start, options), { signal: options.signal });
 }
 
 export const searchEffect = createSearchEffect();

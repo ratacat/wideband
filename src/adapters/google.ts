@@ -1,18 +1,27 @@
-import { Effect } from 'effect'
-import { SearchError, searchEffect } from '../google-search.mjs'
-import type { GooglePage } from '../google-search.mjs'
+import { Effect, Result } from 'effect'
+import { SearchError, SOLVE_MICRO_USD_MAX, searchEffect } from '../google-search.mjs'
+import type { GooglePage, PageOptions } from '../google-search.mjs'
 import { browserPage } from '../browser/client'
 import { AdapterError } from '../core/errors'
 import { canonicalizeUrl } from '../core/merge'
 import type { Hit, ProviderAdapter } from '../core/types'
 
-type PageFn = (query: string, start: number) => Effect.Effect<GooglePage, SearchError | TypeError>
+type PageFn = (query: string, start: number, options: PageOptions) => Effect.Effect<GooglePage, SearchError | TypeError>
+
+function adapterError(error: SearchError | TypeError): AdapterError {
+  return error instanceof SearchError
+    ? Object.assign(
+        new AdapterError(error.code === 'timeout' || error.code === 'invalid_response' ? error.code : 'provider_error', `Google ${error.code}: ${error.message}`),
+        { reason: `google:${error.failures.join(',') || error.code}` },
+      )
+    : new AdapterError('provider_error', 'Google search failed; check uv, Python, and proxy inventory')
+}
 
 function googleAdapter(name: string, page: PageFn, optIn = false): ProviderAdapter {
   return {
     name,
     optIn,
-    timeoutMs: 120_000,
+    timeoutMs: 240_000,
     capabilities: {
       mediaTypes: ['web'],
       freshness: false,
@@ -20,26 +29,25 @@ function googleAdapter(name: string, page: PageFn, optIn = false): ProviderAdapt
       fullContent: false,
       maxPerRequest: 100,
       pages: true,
+      solves: true,
     },
     costModel: { kind: 'free' },
     search(query, ctx) {
+      const solve = query.googleSolve === true
+      const charged = (microUSD: number) => (solve ? { reportedMicroUSD: microUSD } : {})
       return Effect.gen(function* () {
         const hits = new Map<string, Hit>()
         let start: number | null = 0
         for (let index = 0; index < (query.googlePages ?? 1) && start !== null && hits.size < query.max; index++) {
           const result: GooglePage = yield* ctx.request({
             requestId: `page:${index + 1}`,
-            estimateMicroUSD: 0,
+            estimateMicroUSD: solve ? SOLVE_MICRO_USD_MAX : 0,
             retryable: false,
-            run: page(query.q, start).pipe(
-              Effect.mapError(error => error instanceof SearchError
-                ? Object.assign(
-                    new AdapterError(error.code === 'timeout' || error.code === 'invalid_response' ? error.code : 'provider_error', `Google ${error.code}: ${error.message}`),
-                    { reason: `google:${error.failures.join(',') || error.code}` },
-                  )
-                : new AdapterError('provider_error', 'Google search failed; check uv, Python, and proxy inventory')),
-              Effect.result,
-              Effect.map(result => ({ result })),
+            run: page(query.q, start, { solve }).pipe(
+              Effect.match({
+                onSuccess: (served) => ({ result: Result.succeed(served), ...charged(served.microUSD) }),
+                onFailure: (error) => ({ result: Result.fail(adapterError(error)), ...charged(error instanceof SearchError ? error.microUSD : 0) }),
+              }),
             ),
           })
           const added: Hit[] = []

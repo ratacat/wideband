@@ -1,16 +1,18 @@
 import type { Effect } from 'effect';
 export type GoogleResult = { rank: number; title: string; url: string; snippet: string };
 export type ParsedResults = { results: GoogleResult[]; nextStart: number | null };
-export type GooglePage = ParsedResults & { query: string; start: number };
-export type SearchOptions = { signal?: AbortSignal };
+export type GooglePage = ParsedResults & { query: string; start: number; microUSD: number };
+export type PageOptions = { solve?: boolean };
+export type SearchOptions = PageOptions & { signal?: AbortSignal };
 export type GoogleRoute = 'http' | 'maps' | 'browser';
 export type GoogleTry = { route: GoogleRoute; query: string; attempt: number; outcome: string; ip: string | null; bytes: number | null; proxy: string; family: string | null; agent: string | null; slot: number | null };
 export type Search = (query: string, start?: number, options?: SearchOptions) => Promise<GooglePage>;
-export type SearchEffect = (query: string, start?: number) => Effect.Effect<GooglePage, SearchError | TypeError>;
+export type SearchEffect = (query: string, start?: number, options?: PageOptions) => Effect.Effect<GooglePage, SearchError | TypeError>;
 export class SearchError extends Error {
   code: string;
   failures: readonly string[];
-  constructor(code: string, message: string, failures?: readonly string[]);
+  microUSD: number;
+  constructor(code: string, message: string, failures?: readonly string[], microUSD?: number);
 }
 export type SorryForm = { sitekey: string; dataS: string; q: string; continue: string };
 export type Solution = { token: string; microUSD: number };

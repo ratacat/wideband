@@ -33,6 +33,11 @@ import {
 } from './types'
 
 type EngineOptions = { getKey?: (envKey: string) => string | undefined }
+const SOLVER_KEY = 'WIDEBAND_2CAPTCHA_KEY'
+const QUERY_CAPABILITIES = [
+  { option: 'googlePages', capability: 'pages', kind: 'paged' },
+  { option: 'googleSolve', capability: 'solves', kind: 'solving' },
+] as const
 export type ProviderInfo = {
   name: string
   configured: boolean
@@ -570,17 +575,27 @@ export class Engine {
           ),
         )
       const selected = this.state.adapters.filter((adapter) => requested.includes(adapter.name))
-      if (query.googlePages !== undefined && !selected.some((adapter) => adapter.capabilities.pages)) {
-        const paged = this.state.adapters.filter((adapter) => adapter.capabilities.pages).map((adapter) => adapter.name)
+      for (const { option, capability, kind } of QUERY_CAPABILITIES) {
+        if (!query[option] || selected.some((adapter) => adapter.capabilities[capability])) continue
+        const able = this.state.adapters.filter((adapter) => adapter.capabilities[capability]).map((adapter) => adapter.name)
         return yield* Effect.fail(
           new WidebandError(
             'INVALID_ARGS',
-            `googlePages requires selecting a paged provider: ${paged.join(', ')}`,
-            [`use --providers ${paged.join(' or --providers ')}`],
+            `${option} requires selecting a ${kind} provider: ${able.join(', ')}`,
+            [`use --providers ${able.join(' or --providers ')}`],
             2,
           ),
         )
       }
+      if (query.googleSolve && !this.state.getKey(SOLVER_KEY))
+        return yield* Effect.fail(
+          new WidebandError(
+            'INVALID_ARGS',
+            `googleSolve requires ${SOLVER_KEY}`,
+            [`set ${SOLVER_KEY} to a 2captcha API key`],
+            2,
+          ),
+        )
       const providers = selected.map((adapter) => ({
         adapter,
         key: adapter.envKey ? (this.state.getKey(adapter.envKey) ?? '') : '',

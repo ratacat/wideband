@@ -34,6 +34,7 @@ export const UnifiedQuery = Schema.Struct({
       Schema.isLessThanOrEqualTo(10),
     ),
   ),
+  googleSolve: Schema.optionalKey(Schema.Boolean),
   freshness: Schema.optionalKey(
     Schema.Struct({
       after: Schema.optionalKey(Schema.String),
@@ -217,6 +218,7 @@ export type Capabilities = {
   fullContent: boolean
   maxPerRequest: number
   pages?: boolean
+  solves?: boolean
 }
 export type Charge =
   | { kind: 'observed'; microUSD: number }
