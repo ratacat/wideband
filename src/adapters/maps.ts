@@ -21,7 +21,7 @@ const HEADERS = {
   'accept-encoding': 'gzip',
 }
 
-const Place = Schema.Struct({
+const Base = Schema.Struct({
   name: Schema.String,
   placeId: Schema.String,
   address: Schema.optionalKey(Schema.String),
@@ -31,9 +31,15 @@ const Place = Schema.Struct({
   category: Schema.optionalKey(Schema.String),
   phone: Schema.optionalKey(Schema.String),
 })
-type Place = typeof Place.Type
+const Extra = {
+  rating: Schema.Finite,
+  reviews: Schema.Int,
+  hours: Schema.Array(Schema.Struct({ day: Schema.String, hours: Schema.String })),
+  closed: Schema.Literals(['permanently', 'temporarily']),
+}
+type Place = typeof Base.Type & { readonly [K in keyof typeof Extra]?: (typeof Extra)[K]['Type'] }
 
-const PLACE_PATHS: Record<keyof Place, readonly number[]> = {
+const PLACE_PATHS: Record<keyof typeof Base.Type, readonly number[]> = {
   name: [11],
   placeId: [78],
   address: [39],
@@ -42,6 +48,18 @@ const PLACE_PATHS: Record<keyof Place, readonly number[]> = {
   lng: [9, 3],
   category: [13, 0],
   phone: [178, 0, 0],
+}
+const EXTRA_READS: { readonly [K in keyof typeof Extra]: (entry: unknown) => unknown } = {
+  rating: entry => at(entry, [4, 7]),
+  reviews: entry => at(entry, [4, 8]),
+  hours: entry => {
+    const days = at(entry, [203, 0])
+    return Array.isArray(days) ? days.map(day => {
+      const spans = at(day, [3])
+      return { day: at(day, [0]), hours: Array.isArray(spans) ? spans.map(span => at(span, [0])).join(', ') : undefined }
+    }) : undefined
+  },
+  closed: entry => (at(entry, [23]) === 1 ? 'permanently' : at(entry, [160, 0]) === 1 ? 'temporarily' : undefined),
 }
 const LIST_PATH = [64]
 const LIST_ENTRY_PATH = [1]
@@ -60,7 +78,8 @@ function decodePlace(entry: unknown): Place[] {
     const value = at(entry, path)
     return value === null || value === undefined ? [] : [[field, value]]
   })
-  return Option.toArray(Schema.decodeUnknownOption(Place)(Object.fromEntries(fields)))
+  const extras = Object.entries(EXTRA_READS).flatMap(([field, read]) => Option.toArray(Schema.decodeUnknownOption(Extra[field as keyof typeof Extra])(read(entry))).map(value => [field, value]))
+  return Option.toArray(Schema.decodeUnknownOption(Base)(Object.fromEntries(fields))).map(place => ({ ...place, ...Object.fromEntries(extras) }))
 }
 
 function parsePlaces(text: string): Result.Result<Place[], string> {

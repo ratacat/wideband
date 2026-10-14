@@ -242,10 +242,11 @@ Wideband has two Google providers, and you choose one. `google` is the fast HTTP
 
 ### Local Maps provider
 
-The `maps` adapter asks Google Maps for places through the same proxy inventory, without a subprocess. Each place becomes one source. The title is the place name, the URL is its website or a Google Maps link to the place, and the snippet joins the address, category, and phone. A page holds up to 20 places, and `--google-pages` reads further pages. A query that names no place returns no Maps results, so Maps adds little to default scans of other topics.
+The `maps` adapter asks Google Maps for places through the same proxy inventory, without a subprocess. Each place becomes one source. The title is the place name, the URL is its website or a Google Maps link to the place, and the snippet joins the address, category, and phone. A page holds up to 20 places, and `--google-pages` reads further pages. A query that names no place returns no Maps results, so Maps adds little to default scans of other topics. With `--capture`, each source's `raw.maps` holds the place: `name`, `placeId`, `address`, `website`, `lat`, `lng`, `category`, `phone`, `rating`, `reviews`, `hours` as `{ day, hours }` per day in Google's words, and `closed`, `permanently` or `temporarily` when Google marks the place closed. A field that the answer lacks is absent. On October 14, 2026, these fields equaled AnyAPI's `maps.place` answers for 17 of 17 places, and `closed` matched the label that Google Maps shows for 5 closed places.
 
 ```sh
 wideband scan "live music venue Salt Lake City Utah" --providers maps --max 20
+wideband scan "Dawson's Bar & Grill Tacoma WA" --providers maps --json --capture --fields url,title,snippet,raw
 ```
 
 ### Local Google provider
