@@ -230,7 +230,7 @@ SQLite stores sweeps, provider outcomes, request attempts, cached results, and s
 
 ## Providers
 
-Google is included in default scans alongside configured API providers. Google browser is not. An explicit `--providers` list replaces the default set:
+Google is included in default scans alongside configured API providers. Google browser and AnyAPI are not. An explicit `--providers` list replaces the default set:
 
 ```sh
 wideband scan "scuba diving shops bonaire"
@@ -405,7 +405,7 @@ When `WIDEBAND_2CAPTCHA_KEY` is set, a request that gets a captcha pays 2captcha
 
 ### Google through AnyAPI
 
-The `anyapi` provider returns Google results through the [anyapi](https://getanyapi.com) `google.search` API, with no local proxies, uv, or Python. Its published base price is $0.0005 per page, and default automatic fallback can cost up to $0.0009. Each attempt reserves that upper bound and then records the reported amount. It reads its key from `ANYAPI_API_KEY`, or else from `~/.anyapi/config.json`. `--google-pages` sets its page count.
+The `anyapi` provider returns Google results through the [anyapi](https://getanyapi.com) `google.search` API, with no local proxies, uv, or Python. It is opt-in, because every page is billed: a scan uses it only when `--providers` names it. Its published base price is $0.0005 per page, and default automatic fallback can cost up to $0.0009. Each attempt reserves that upper bound and then records the reported amount. It reads its key from `ANYAPI_API_KEY`, or else from `~/.anyapi/config.json`. `--google-pages` sets its page count.
 
 Page depth participates in cache keys. Other providers retain their own result caps and are not paginated by `--google-pages`.
 

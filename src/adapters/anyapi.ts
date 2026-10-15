@@ -22,6 +22,7 @@ const Cost = Schema.Struct({ costUsd: Schema.optionalKey(ReportedUSD) })
 export const anyapi: ProviderAdapter = {
   name: 'anyapi',
   envKey: 'ANYAPI_API_KEY',
+  optIn: true,
   timeoutMs: 60_000,
   capabilities: {
     mediaTypes: ['web'],
