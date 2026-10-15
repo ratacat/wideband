@@ -37,6 +37,7 @@ type StatsRow = {
   usd: number
 }
 const DEFAULT_DB = join(homedir(), '.wideband', 'ledger.db')
+const SCHEMA_VERSION = 1
 
 function percentile(values: number[], p: number): number | null {
   if (!values.length) return null
@@ -83,6 +84,8 @@ export class Ledger {
   }
 
   private migrate() {
+    const version = this.db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version ?? 0
+    if (version >= SCHEMA_VERSION) return
     const migrate = this.db.transaction(() => {
       this.db.run(
         "CREATE TABLE IF NOT EXISTS sweeps (id TEXT PRIMARY KEY, ts INTEGER, kind TEXT, query_json TEXT, total_hits INTEGER, unique_sources INTEGER, total_usd REAL, total_ms INTEGER, status TEXT NOT NULL DEFAULT 'complete', unknown_attempts INTEGER NOT NULL DEFAULT 0, accounting_version INTEGER NOT NULL DEFAULT 0)",
@@ -109,6 +112,8 @@ export class Ledger {
       this.db.run(
         'CREATE TABLE IF NOT EXISTS seen (session_id TEXT, source_id TEXT, ts INTEGER, PRIMARY KEY(session_id, source_id))',
       )
+      this.db.run('CREATE INDEX IF NOT EXISTS calls_sweep ON calls(sweep_id)')
+      this.db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     })
     migrate.immediate()
   }
@@ -198,7 +203,7 @@ export class Ledger {
         )
       }
     })
-    tx()
+    tx.immediate()
   }
 
   cacheGet(hash: string, ttlSec: number): SweepResult | null {
@@ -250,7 +255,7 @@ export class Ledger {
       for (const id of ids) if (stmt.run(session, id, now).changes > 0) claimed.add(id)
       return claimed
     })
-    return claim()
+    return claim.immediate()
   }
 
   stats(days = 30): LedgerStats {
