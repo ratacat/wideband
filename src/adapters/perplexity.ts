@@ -32,6 +32,7 @@ export const perplexity: ProviderAdapter = {
           headers: {
             authorization: `Bearer ${ctx.key}`,
             'content-type': 'application/json',
+            'X-Pplx-Integration': 'wideband',
           },
           body: JSON.stringify({ query: q.q, max_results: max }),
         }, PerplexityResponse, ctx.key),
